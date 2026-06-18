@@ -11,7 +11,8 @@ const ASSETS = [
     '/sonic.js',
     '/p2p.js',
     '/config.js',
-    '/webmanifest.json'
+    '/webmanifest.json',
+    '/emergency_alarm.mp3'
 ];
 
 self.addEventListener('install', function(event) {
