@@ -157,9 +157,27 @@ const P2P = {
 
         const pc = new RTCPeerConnection({
             iceServers: [
+                // STUN servers for direct P2P
                 { urls: 'stun:stun.l.google.com:19302'  },
                 { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' }
+                { urls: 'stun:stun2.l.google.com:19302' },
+                // TURN servers for NAT traversal fallback (mobile carriers, corporate firewalls)
+                // Free relay from Open Relay Project — replace with your own for production
+                {
+                    urls: 'turn:openrelay.metered.ca:80',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                },
+                {
+                    urls: 'turn:openrelay.metered.ca:443',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                },
+                {
+                    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                }
             ]
         });
 
@@ -183,6 +201,15 @@ const P2P = {
             } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
                 this.cleanupPeer(peerId);
             }
+        };
+
+        // Debug: log ICE candidate gathering for troubleshooting
+        pc.onicegatheringstatechange = () => {
+            this.log(`Peer ${peerId} ICE gathering state:`, pc.iceGatheringState);
+        };
+
+        pc.oniceconnectionstatechange = () => {
+            this.log(`Peer ${peerId} ICE connection state:`, pc.iceConnectionState);
         };
 
         // Receiver side: data channel comes in via this event
@@ -341,22 +368,28 @@ const P2P = {
     broadcastAlert: function(alertData) {
         const message  = JSON.stringify({ type: 'emergency', data: alertData });
         let sentCount  = 0;
+        let totalPeers = this.dataChannels.size;
+
+        this.log(`Broadcasting alert to ${totalPeers} data channels...`);
 
         this.dataChannels.forEach((channel, peerId) => {
             if (channel.readyState === 'open') {
                 try {
                     channel.send(message);
                     sentCount++;
-                    this.log('Alert sent to peer:', peerId);
+                    this.log('✅ Alert sent to peer:', peerId);
                 } catch (e) {
-                    console.error(`[P2P] Failed to send to ${peerId}:`, e);
+                    console.error(`[P2P] ❌ Failed to send to ${peerId}:`, e);
                 }
             } else {
-                this.log('Channel not open for peer:', peerId, '— state:', channel.readyState);
+                this.log('⚠️ Channel not open for peer:', peerId, '— state:', channel.readyState, '(waiting for ICE/TURN negotiation)');
             }
         });
 
-        this.log(`Total peers alerted via P2P: ${sentCount}`);
+        this.log(`📊 P2P broadcast complete: ${sentCount}/${totalPeers} peers reached`);
+        if (sentCount === 0 && totalPeers > 0) {
+            this.log('💡 Tip: Channels are still connecting. TURN relay may be needed for cross-network peers.');
+        }
         return sentCount;
     },
 
