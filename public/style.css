@@ -1,5 +1,5 @@
 /* ========================================
-   SOUNDALERT – Stylesheet
+   SOUNDALERT – Stylesheet (WebSocket Edition)
    ======================================== */
 
 *, *::before, *::after {
@@ -87,7 +87,7 @@ body {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 20px;
+    margin-bottom: 12px;
 }
 
 .logo {
@@ -113,6 +113,44 @@ body {
     font-size: 13px;
     color: var(--text-secondary);
     margin-top: 2px;
+}
+
+/* ---- Live Users Badge ---- */
+.live-users {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 6px 12px;
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: 100px;
+    font-size: 12px;
+    color: var(--text-muted);
+    width: fit-content;
+}
+
+.live-users.connected {
+    background: var(--green-light);
+    border-color: var(--green);
+    color: var(--green-text);
+}
+
+.live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.live-users.connected .live-dot {
+    background: var(--green);
+}
+
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
 }
 
 /* ---- Status Bar ---- */
@@ -344,6 +382,125 @@ body {
     color: var(--red);
 }
 
+/* ---- Incoming Alert Overlay ---- */
+.incoming-alert {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.incoming-alert.show {
+    opacity: 1;
+    pointer-events: all;
+}
+
+.incoming-content {
+    background: var(--surface);
+    border-radius: var(--radius-xl);
+    padding: 32px 24px;
+    max-width: 340px;
+    width: 90%;
+    text-align: center;
+    border: 1px solid var(--border);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    animation: incoming-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes incoming-pop {
+    0% { transform: scale(0.7); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.incoming-icon {
+    width: 72px;
+    height: 72px;
+    background: linear-gradient(135deg, var(--red), var(--red-dark));
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 16px;
+    box-shadow: 0 8px 32px rgba(226, 75, 74, 0.4);
+    animation: incoming-icon-pulse 1s ease-in-out infinite;
+}
+
+@keyframes incoming-icon-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+}
+
+.incoming-icon svg {
+    width: 36px;
+    height: 36px;
+    color: white;
+}
+
+.incoming-alert h3 {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--red);
+    margin-bottom: 8px;
+}
+
+.incoming-alert p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.incoming-time {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+}
+
+.map-btn {
+    display: inline-block;
+    background: var(--green);
+    color: white;
+    text-decoration: none;
+    padding: 10px 20px;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    transition: transform 0.15s ease, opacity 0.2s;
+}
+
+.map-btn:hover {
+    transform: scale(1.05);
+    opacity: 0.9;
+}
+
+.dismiss-btn {
+    display: block;
+    width: 100%;
+    padding: 10px;
+    background: var(--bg);
+    border: 0.5px solid var(--border-md);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+}
+
+.dismiss-btn:hover {
+    border-color: var(--red);
+    color: var(--red);
+}
+
 /* ---- Divider ---- */
 .divider {
     height: 0.5px;
@@ -376,6 +533,13 @@ body {
 
 .section-label svg {
     color: var(--text-muted);
+}
+
+.live-badge {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--green);
+    letter-spacing: 0.1em;
 }
 
 .text-btn {
@@ -433,6 +597,11 @@ body {
 .badge.online {
     background: var(--green-light);
     color: var(--green-text);
+}
+
+.badge.alerted {
+    background: var(--red-light);
+    color: var(--red);
 }
 
 .badge.offline {
@@ -517,7 +686,9 @@ body {
 @media (prefers-reduced-motion: reduce) {
     .status-dot,
     .btn-ring,
-    .emergency-btn {
+    .emergency-btn,
+    .live-dot,
+    .incoming-icon {
         animation: none !important;
         transition: none !important;
     }
@@ -552,6 +723,46 @@ body {
     .btn-label {
         font-size: 13px;
     }
+
+    .incoming-content {
+        padding: 24px 20px;
+    }
+
+    .incoming-alert h3 {
+        font-size: 18px;
+    }
+}
+
+
+/* ---- Install Hint ---- */
+.install-hint {
+    background: var(--green-light);
+    border: 0.5px solid var(--green);
+    border-radius: var(--radius-md);
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--green-text);
+    font-weight: 500;
+    animation: slide-down 0.3s ease-out;
+}
+
+@keyframes slide-down {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- PWA Standalone Mode ---- */
+@media (display-mode: standalone) {
+    .install-hint {
+        display: none !important;
+    }
+
+    body {
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+    }
 }
 
 @media (max-width: 360px) {
@@ -569,4 +780,89 @@ body {
         width: 30px;
         height: 30px;
     }
+}
+
+/* ---- PWA Install Prompt ---- */
+.install-prompt {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    padding: 20px;
+}
+
+.install-prompt[hidden] {
+    display: none;
+}
+
+.install-content {
+    background: var(--surface);
+    border-radius: var(--radius-xl);
+    padding: 32px 24px;
+    max-width: 320px;
+    width: 100%;
+    text-align: center;
+    border: 1px solid var(--border);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+
+.install-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+}
+
+.install-content h3 {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.install-content p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: 24px;
+    line-height: 1.5;
+}
+
+.install-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.install-btn {
+    background: var(--red);
+    color: white;
+    border: none;
+    padding: 14px 20px;
+    border-radius: var(--radius-md);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.15s ease, opacity 0.2s;
+}
+
+.install-btn:hover {
+    transform: scale(1.02);
+    opacity: 0.9;
+}
+
+.install-dismiss {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    padding: 10px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.install-dismiss:hover {
+    color: var(--text-secondary);
 }

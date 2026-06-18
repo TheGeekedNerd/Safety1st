@@ -73,39 +73,57 @@ const Emergency = {
       message: '🚨 EMERGENCY!'
     };
 
+    console.log('🚨 EMERGENCY TRIGGERED');
+    console.log('📍 Location:', locationText);
+    console.log('📡 Starting 3-channel broadcast...');
+
     // CHANNEL 1: Sonic
     if (window.SonicAlert) {
+      console.log('📡 Channel 1: Sonic transmit starting...');
       SonicAlert.transmit(alertData);
-      console.log('📡 Channel 1: Sonic broadcast');
+    } else {
+      console.log('❌ Channel 1: SonicAlert not available');
     }
 
     // CHANNEL 2: P2P
     if (window.P2P) {
       const peerCount = P2P.broadcastAlert(alertData);
-      console.log(`📡 Channel 2: P2P to ${peerCount} peers`);
+      console.log(`📡 Channel 2: P2P sent to ${peerCount} peers`);
+    } else {
+      console.log('❌ Channel 2: P2P not available');
     }
 
-    // CHANNEL 3: Push Notifications
+    // CHANNEL 3: Push
+    console.log('📡 Channel 3: Push notification starting...');
     this.sendPushNotification(alertData);
 
     // Backup: Web Share
     if (navigator.share) {
       navigator.share({
         title: '🚨 Emergency Alert',
-        text: `🚨 EMERGENCY!\n${locationText}\nTime: ${new Date().toLocaleString()}`,
+        text: `🚨 EMERGENCY!
+${locationText}
+Time: ${new Date().toLocaleString()}`,
         url: window.location.href
       }).catch(() => {});
     }
 
     if (navigator.clipboard) {
       navigator.clipboard.writeText(
-        `🚨 EMERGENCY!\n${locationText}\nTime: ${new Date().toLocaleString()}`
+        `🚨 EMERGENCY!
+${locationText}
+Time: ${new Date().toLocaleString()}`
       ).catch(() => {});
     }
 
     History.save(locationText);
+
+    // Sound + vibration
+    console.log('🔊 Playing alert sound...');
     this.playAlertSound();
+
     if (navigator.vibrate) {
+      console.log('📳 Vibrating...');
       navigator.vibrate([200, 100, 200, 100, 400]);
     }
 
@@ -117,6 +135,7 @@ const Emergency = {
 
   sendPushNotification: async function(alertData) {
     try {
+      console.log('📡 Sending push to server...');
       const response = await fetch('/broadcast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -124,10 +143,10 @@ const Emergency = {
       });
 
       const result = await response.json();
-      console.log(`📡 Channel 3: Push sent to ${result.sent} devices`);
+      console.log(`✅ Push sent to ${result.sent} devices`);
 
     } catch (err) {
-      console.error('Push broadcast failed:', err);
+      console.error('❌ Push broadcast failed:', err);
     }
   },
 
@@ -191,6 +210,7 @@ const Emergency = {
       overlay.classList.add('show');
     }
 
+    console.log('🔊 Playing incoming alert sound...');
     this.playAlertSound();
 
     if (navigator.vibrate) {
@@ -216,11 +236,20 @@ const Emergency = {
   },
 
   playAlertSound: function() {
-    if (!CONFIG.NOTIFICATIONS.SOUND) return;
+    console.log('🔊 playAlertSound called');
+    if (!CONFIG.NOTIFICATIONS.SOUND) {
+      console.log('❌ Sound disabled in config');
+      return;
+    }
 
     try {
       if (!this.audioContext) {
         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+
+      // Ensure audio context is running
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume();
       }
 
       const ctx = this.audioContext;
@@ -245,8 +274,10 @@ const Emergency = {
       osc.start(now);
       osc.stop(now + 1.5);
 
+      console.log('✅ Alert sound played');
+
     } catch(e) {
-      // Silent fail
+      console.error('❌ Failed to play sound:', e);
     }
   },
 

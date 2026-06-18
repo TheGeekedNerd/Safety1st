@@ -7,26 +7,12 @@ const webpush = require('web-push');
 const PORT = process.env.PORT || 3000;
 
 // ============================================
-// AUTO-GENERATE VAPID KEYS if not set
+// VAPID KEYS for Push Notifications
+// Generate once with: npx web-push generate-vapid-keys
 // ============================================
-let VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
-let VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BEl62iSMf-VZBdg3Zp5DzR7U8C4r-KB0fG0x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x';
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:soundalert@example.com';
-
-// If keys not in environment, generate them (and log for you to save)
-if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
-    console.log('🔑 Generating new VAPID keys...');
-    const vapidKeys = webpush.generateVAPIDKeys();
-    VAPID_PUBLIC_KEY = vapidKeys.publicKey;
-    VAPID_PRIVATE_KEY = vapidKeys.privateKey;
-    
-    console.log('⚠️  VAPID KEYS GENERATED - SAVE THESE FOR RENDER:');
-    console.log('=======================================');
-    console.log('VAPID_PUBLIC_KEY=' + VAPID_PUBLIC_KEY);
-    console.log('VAPID_PRIVATE_KEY=' + VAPID_PRIVATE_KEY);
-    console.log('=======================================');
-    console.log('Add these as environment variables in Render!');
-}
 
 webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
@@ -45,6 +31,7 @@ const mimeTypes = {
 };
 
 const server = http.createServer((req, res) => {
+  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -55,18 +42,21 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Health check
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', subscribers: subscriptions.size }));
     return;
   }
 
+  // Get VAPID public key
   if (req.url === '/vapid-public-key') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ publicKey: VAPID_PUBLIC_KEY }));
     return;
   }
 
+  // Subscribe to push notifications
   if (req.url === '/subscribe' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => body += chunk);
@@ -85,6 +75,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Send push notification to all subscribers
   if (req.url === '/broadcast' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => body += chunk);
@@ -107,16 +98,18 @@ const server = http.createServer((req, res) => {
           data: {
             lat: alert.lat,
             lng: alert.lng,
-            url: alert.lat && alert.lng
+            url: alert.lat && alert.lng 
               ? `https://www.google.com/maps?q=${alert.lat},${alert.lng}`
               : '/'
           }
         });
 
+        // Send to all subscribers
         const promises = Array.from(subscriptions).map(subStr => {
           const sub = JSON.parse(subStr);
           return webpush.sendNotification(sub, payload).catch(err => {
             console.error('Push failed:', err.statusCode);
+            // Remove invalid subscriptions
             if (err.statusCode === 410 || err.statusCode === 404) {
               subscriptions.delete(subStr);
             }
@@ -136,6 +129,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Static files
   let filePath = req.url === '/' ? '/index.html' : req.url;
   filePath = path.join(__dirname, 'public', filePath);
 
@@ -166,6 +160,7 @@ const server = http.createServer((req, res) => {
   });
 });
 
+// WebSocket for real-time (P2P signaling + Sonic is client-side)
 const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws, req) => {
@@ -178,6 +173,8 @@ wss.on('connection', (ws, req) => {
     try {
       const data = JSON.parse(message);
       data.from = clientId;
+
+      // Forward to all other clients (P2P signaling)
       const msg = JSON.stringify(data);
       wss.clients.forEach((client) => {
         if (client !== ws && client.readyState === WebSocket.OPEN) {
@@ -198,4 +195,5 @@ server.listen(PORT, () => {
   console.log(`🚨 SoundAlert server running on port ${PORT}`);
   console.log(`📡 WebSocket ready for P2P signaling`);
   console.log(`🔔 Push notifications: ${subscriptions.size} subscribers`);
+  console.log(`🏥 Health check: http://localhost:${PORT}/health`);
 });

@@ -1,173 +1,219 @@
+/* ========================================
+   APP - Main Application (PWA + Push Edition)
+   ======================================== */
+
 const App = {
-  initialized: false,
-  pushSubscription: null,
+    initialized: false,
+    pushSubscription: null,
 
-  init: function() {
-    if (this.initialized) return;
-    this.initialized = true;
+    init: function() {
+        if (this.initialized) return;
+        this.initialized = true;
 
-    console.log('🚨 SoundAlert initializing...');
+        console.log('🚨 SoundAlert initializing...');
 
-    this.registerSW();
-    this.requestNotificationPermission();
-    this.setupInstallPrompt();
-    this.updateStatus();
+        // Register Service Worker with push support
+        this.registerSW();
 
-    const btn = document.getElementById('emergencyBtn');
-    if (btn) {
-      btn.addEventListener('touchstart', function() {
-        this.style.transform = 'scale(0.96)';
-      }, { passive: true });
+        // Request notification permission
+        this.requestNotificationPermission();
 
-      btn.addEventListener('touchend', function() {
-        this.style.transform = '';
-      }, { passive: true });
-    }
-  },
+        // Add install prompt
+        this.setupInstallPrompt();
 
-  registerSW: async function() {
-    if (!('serviceWorker' in navigator)) {
-      console.log('Service Worker not supported');
-      return;
-    }
+        // Update status
+        this.updateStatus();
 
-    try {
-      const registration = await navigator.serviceWorker.register('sw.js');
-      console.log('✅ SW registered');
+        // Touch feedback
+        const btn = document.getElementById('emergencyBtn');
+        if (btn) {
+            btn.addEventListener('touchstart', function() {
+                this.style.transform = 'scale(0.96)';
+            }, { passive: true });
 
-      await this.subscribeToPush(registration);
+            btn.addEventListener('touchend', function() {
+                this.style.transform = '';
+            }, { passive: true });
+        }
+    },
 
-    } catch (err) {
-      console.error('SW registration failed:', err);
-    }
-  },
+    /**
+     * Register Service Worker
+     */
+    registerSW: async function() {
+        if (!('serviceWorker' in navigator)) {
+            console.log('Service Worker not supported');
+            return;
+        }
 
-  subscribeToPush: async function(registration) {
-    try {
-      const response = await fetch('/vapid-public-key');
-      const { publicKey } = await response.json();
+        try {
+            const registration = await navigator.serviceWorker.register('sw.js');
+            console.log('✅ SW registered');
 
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: this.urlBase64ToUint8Array(publicKey)
-      });
+            // Subscribe to push notifications
+            await this.subscribeToPush(registration);
 
-      console.log('🔔 Push subscription:', subscription);
-      this.pushSubscription = subscription;
+        } catch (err) {
+            console.error('SW registration failed:', err);
+        }
+    },
 
-      await fetch('/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(subscription)
-      });
+    /**
+     * Subscribe to push notifications
+     */
+    subscribeToPush: async function(registration) {
+        try {
+            // Get VAPID public key from server
+            const response = await fetch('/vapid-public-key');
+            const { publicKey } = await response.json();
 
-      console.log('🔔 Push subscription saved to server');
-      this.showInstallPrompt();
+            // Subscribe
+            const subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: this.urlBase64ToUint8Array(publicKey)
+            });
 
-    } catch (err) {
-      console.error('Push subscription failed:', err);
-    }
-  },
+            console.log('🔔 Push subscription:', subscription);
+            this.pushSubscription = subscription;
 
-  urlBase64ToUint8Array: function(base64String) {
-    const padding = '='.repeat((4 - base64String.length % 4) % 4);
-    const base64 = (base64String + padding)
-      .replace(/\-/g, '+')
-      .replace(/_/g, '/');
+            // Send subscription to server
+            await fetch('/subscribe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(subscription)
+            });
 
-    const rawData = window.atob(base64);
-    const outputArray = new Uint8Array(rawData.length);
+            console.log('🔔 Push subscription saved to server');
+            this.showInstallPrompt();
 
-    for (let i = 0; i < rawData.length; ++i) {
-      outputArray[i] = rawData.charCodeAt(i);
-    }
-    return outputArray;
-  },
+        } catch (err) {
+            console.error('Push subscription failed:', err);
+        }
+    },
 
-  requestNotificationPermission: async function() {
-    if (!('Notification' in window)) return;
+    /**
+     * Convert VAPID key
+     */
+    urlBase64ToUint8Array: function(base64String) {
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding)
+            .replace(/\-/g, '+')
+            .replace(/_/g, '/');
 
-    if (Notification.permission === 'default') {
-      const permission = await Notification.requestPermission();
-      console.log('Notification permission:', permission);
-    }
-  },
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
 
-  setupInstallPrompt: function() {
-    let deferredPrompt;
+        for (let i = 0; i < rawData.length; ++i) {
+            outputArray[i] = rawData.charCodeAt(i);
+        }
+        return outputArray;
+    },
 
-    window.addEventListener('beforeinstallprompt', (e) => {
-      e.preventDefault();
-      deferredPrompt = e;
-      this.showInstallBanner(deferredPrompt);
-    });
+    /**
+     * Request notification permission
+     */
+    requestNotificationPermission: async function() {
+        if (!('Notification' in window)) return;
 
-    window.addEventListener('appinstalled', () => {
-      console.log('✅ PWA installed');
-      deferredPrompt = null;
-      this.hideInstallBanner();
-    });
-  },
+        if (Notification.permission === 'default') {
+            const permission = await Notification.requestPermission();
+            console.log('Notification permission:', permission);
+        }
+    },
 
-  showInstallBanner: function(deferredPrompt) {
-    let banner = document.getElementById('installBanner');
-    if (!banner) {
-      banner = document.createElement('div');
-      banner.id = 'installBanner';
-      banner.innerHTML = `
-        <div style="position:fixed;bottom:0;left:0;right:0;background:var(--red);color:white;padding:16px;text-align:center;z-index:9999;display:flex;align-items:center;justify-content:center;gap:12px;">
-          <span>📲 Install SoundAlert for emergency alerts even when closed</span>
-          <button id="installBtn" style="background:white;color:var(--red);border:none;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer;">Install</button>
-          <button id="dismissInstall" style="background:transparent;color:white;border:1px solid white;padding:8px 12px;border-radius:8px;cursor:pointer;">✕</button>
-        </div>
-      `;
-      document.body.appendChild(banner);
+    /**
+     * Setup PWA install prompt
+     */
+    setupInstallPrompt: function() {
+        let deferredPrompt;
 
-      document.getElementById('installBtn').addEventListener('click', () => {
-        deferredPrompt.prompt();
-        deferredPrompt.userChoice.then((choice) => {
-          if (choice.outcome === 'accepted') {
-            console.log('User installed PWA');
-          }
-          this.hideInstallBanner();
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            this.showInstallBanner(deferredPrompt);
         });
-      });
 
-      document.getElementById('dismissInstall').addEventListener('click', () => {
-        this.hideInstallBanner();
-      });
+        window.addEventListener('appinstalled', () => {
+            console.log('✅ PWA installed');
+            deferredPrompt = null;
+            this.hideInstallBanner();
+        });
+    },
+
+    /**
+     * Show install banner
+     */
+    showInstallBanner: function(deferredPrompt) {
+        // Create install banner if not exists
+        let banner = document.getElementById('installBanner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'installBanner';
+            banner.innerHTML = `
+                <div style="position:fixed;bottom:0;left:0;right:0;background:var(--red);color:white;padding:16px;text-align:center;z-index:9999;display:flex;align-items:center;justify-content:center;gap:12px;">
+                    <span>📲 Install SoundAlert for emergency alerts even when closed</span>
+                    <button id="installBtn" style="background:white;color:var(--red);border:none;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer;">Install</button>
+                    <button id="dismissInstall" style="background:transparent;color:white;border:1px solid white;padding:8px 12px;border-radius:8px;cursor:pointer;">✕</button>
+                </div>
+            `;
+            document.body.appendChild(banner);
+
+            document.getElementById('installBtn').addEventListener('click', () => {
+                deferredPrompt.prompt();
+                deferredPrompt.userChoice.then((choice) => {
+                    if (choice.outcome === 'accepted') {
+                        console.log('User installed PWA');
+                    }
+                    this.hideInstallBanner();
+                });
+            });
+
+            document.getElementById('dismissInstall').addEventListener('click', () => {
+                this.hideInstallBanner();
+            });
+        }
+    },
+
+    hideInstallBanner: function() {
+        const banner = document.getElementById('installBanner');
+        if (banner) banner.remove();
+    },
+
+    showInstallPrompt: function() {
+        // Also show a subtle prompt in the UI
+        const liveUsers = document.getElementById('liveUsers');
+        if (liveUsers && !window.matchMedia('(display-mode: standalone)').matches) {
+            // Not installed yet
+        }
+    },
+
+    /**
+     * Update status display
+     */
+    updateStatus: function() {
+        const statusText = document.getElementById('statusText');
+        const statusDot = document.getElementById('statusDot');
+
+        if (statusText) {
+            statusText.textContent = Emergency.isAlerting ? 'Alerting...' : 'Ready';
+        }
+
+        if (statusDot) {
+            statusDot.className = Emergency.isAlerting ? 'status-dot alerting' : 'status-dot ready';
+        }
+    },
+
+    getVersion: function() {
+        return '4.0-pwa';
     }
-  },
-
-  hideInstallBanner: function() {
-    const banner = document.getElementById('installBanner');
-    if (banner) banner.remove();
-  },
-
-  updateStatus: function() {
-    const statusText = document.getElementById('statusText');
-    const statusDot = document.getElementById('statusDot');
-
-    if (statusText) {
-      statusText.textContent = Emergency.isAlerting ? 'Alerting...' : 'Ready';
-    }
-
-    if (statusDot) {
-      statusDot.className = Emergency.isAlerting ? 'status-dot alerting' : 'status-dot ready';
-    }
-  },
-
-  getVersion: function() {
-    return '4.0-pwa';
-  }
 };
 
 window.App = App;
 
 document.addEventListener('DOMContentLoaded', function() {
-  App.init();
+    App.init();
 });
 
 setInterval(function() {
-  App.updateStatus();
+    App.updateStatus();
 }, 1000);
