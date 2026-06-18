@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#111111">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>SoundAlert – Emergency Button</title>
+    <link rel="manifest" href="webmanifest.json">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="page">
+    <div class="card">
+
+        <!-- Header -->
+        <header class="header">
+            <div class="logo" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+            </div>
+            <div class="header-text">
+                <h1>SoundAlert</h1>
+                <p class="subtitle">One tap. Instant help.</p>
+            </div>
+        </header>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <span class="status-left">
+                <span class="status-dot" id="statusDot" aria-label="System status"></span>
+                <span id="statusText">Ready</span>
+            </span>
+            <button class="gps-pill" onclick="GPS.getLocation()" aria-label="Enable GPS location">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                    <circle cx="12" cy="10" r="3"/>
+                </svg>
+                <span id="gpsDisplay">GPS: off</span>
+            </button>
+        </div>
+
+        <!-- Emergency Button -->
+        <div class="btn-zone">
+            <div class="btn-ring" aria-hidden="true"></div>
+            <button
+                class="emergency-btn"
+                id="emergencyBtn"
+                onclick="Emergency.trigger()"
+                aria-label="Send emergency alert"
+            >
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <span class="btn-label">Emergency</span>
+                <span class="btn-hint">Tap to alert</span>
+            </button>
+        </div>
+
+        <!-- Alert Mode (hidden until triggered) -->
+        <div class="alert-banner" id="alertMode" role="alert" aria-live="assertive" hidden>
+            <div class="alert-icon-wrap" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+            </div>
+            <div class="alert-body">
+                <p class="alert-title">Alert sent</p>
+                <p class="alert-detail" id="alertDetail">Notifying nearby devices…</p>
+            </div>
+            <button class="cancel-btn" onclick="Emergency.cancel()">Cancel</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- Nearby Devices -->
+        <section class="section">
+            <div class="section-head">
+                <h2 class="section-label">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+                        <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+                        <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+                        <circle cx="12" cy="20" r="1"/>
+                    </svg>
+                    Nearby devices
+                </h2>
+            </div>
+            <div id="nearbyList">
+                <div class="device-row">
+                    <span class="device-name">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                        Scanning for devices…
+                    </span>
+                    <span class="badge offline">Scanning</span>
+                </div>
+            </div>
+        </section>
+
+        <div class="divider"></div>
+
+        <!-- Alert History -->
+        <section class="section">
+            <div class="section-head">
+                <h2 class="section-label">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="10"/>
+                        <polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                    Recent alerts
+                </h2>
+                <button class="text-btn" onclick="History.clear()">Clear all</button>
+            </div>
+            <div id="historyList">
+                <div class="empty-state">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="10"/>
+                        <polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                    <p>No alerts sent yet</p>
+                </div>
+            </div>
+        </section>
+
+    </div>
+</div>
+
+<script src="config.js"></script>
+<script src="gps.js"></script>
+<script src="history.js"></script>
+<script src="nearby.js"></script>
+<script src="emergency.js"></script>
+<script src="app.js"></script>
+<script>
+    // Register Service Worker
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js')
+            .then(reg => console.log('SW registered'))
+            .catch(err => console.log('SW registration failed'));
+    }
+</script>
+</body>
+</html>
