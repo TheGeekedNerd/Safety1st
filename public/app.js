@@ -10,18 +10,16 @@ const App = {
         if (this.initialized) return;
         this.initialized = true;
 
-        console.log('SoundAlert initializing...');
+        console.log('[App] SoundAlert initializing...');
 
         this.registerSW();
         this.requestNotificationPermission();
         this.setupInstallPrompt();
         this.updateStatus();
 
-        // Alarm trigger from SW or URL
         this.setupAlarmListener();
         this.checkUrlAlarmTrigger();
 
-        // Touch feedback
         const btn = document.getElementById('emergencyBtn');
         if (btn) {
             btn.addEventListener('touchstart', function() {
@@ -36,43 +34,70 @@ const App = {
 
     registerSW: async function() {
         if (!('serviceWorker' in navigator)) {
-            console.log('Service Worker not supported');
+            console.log('[App] Service Worker not supported');
             return;
         }
 
         try {
+            // Unregister old SWs first to force update
+            console.log('[App] Checking for old SWs...');
+            const oldRegistrations = await navigator.serviceWorker.getRegistrations();
+            for (let reg of oldRegistrations) {
+                console.log('[App] Unregistering old SW:', reg.scope);
+                await reg.unregister();
+            }
+
             const registration = await navigator.serviceWorker.register('sw.js');
-            console.log('SW registered');
+            console.log('[App] SW registered, scope:', registration.scope);
+
+            // Force update check
+            registration.update();
+
+            await navigator.serviceWorker.ready;
+            console.log('[App] SW is ready');
+
             await this.subscribeToPush(registration);
         } catch (err) {
-            console.error('SW registration failed:', err);
+            console.error('[App] SW registration failed:', err);
         }
     },
 
     subscribeToPush: async function(registration) {
         try {
+            console.log('[App] Fetching VAPID key...');
             const response = await fetch('/vapid-public-key');
+            if (!response.ok) {
+                throw new Error('Failed to fetch VAPID key: ' + response.status);
+            }
             const { publicKey } = await response.json();
+            console.log('[App] Got VAPID key');
 
+            console.log('[App] Subscribing to push...');
             const subscription = await registration.pushManager.subscribe({
                 userVisibleOnly: true,
                 applicationServerKey: this.urlBase64ToUint8Array(publicKey)
             });
 
-            console.log('Push subscription:', subscription);
+            console.log('[App] Push subscription created');
             this.pushSubscription = subscription;
 
-            await fetch('/subscribe', {
+            console.log('[App] Sending subscription to server...');
+            const subResponse = await fetch('/subscribe', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(subscription)
             });
 
-            console.log('Push subscription saved to server');
+            if (!subResponse.ok) {
+                throw new Error('Server rejected subscription: ' + subResponse.status);
+            }
+
+            const subResult = await subResponse.json();
+            console.log('[App] Subscription saved:', subResult);
             this.showInstallPrompt();
 
         } catch (err) {
-            console.error('Push subscription failed:', err);
+            console.error('[App] Push subscription failed:', err);
         }
     },
 
@@ -94,9 +119,10 @@ const App = {
     requestNotificationPermission: async function() {
         if (!('Notification' in window)) return;
 
+        console.log('[App] Notification permission:', Notification.permission);
         if (Notification.permission === 'default') {
             const permission = await Notification.requestPermission();
-            console.log('Notification permission:', permission);
+            console.log('[App] Permission result:', permission);
         }
     },
 
@@ -110,7 +136,7 @@ const App = {
         });
 
         window.addEventListener('appinstalled', () => {
-            console.log('PWA installed');
+            console.log('[App] PWA installed');
             deferredPrompt = null;
             this.hideInstallBanner();
         });
@@ -134,7 +160,7 @@ const App = {
                 deferredPrompt.prompt();
                 deferredPrompt.userChoice.then((choice) => {
                     if (choice.outcome === 'accepted') {
-                        console.log('User installed PWA');
+                        console.log('[App] User installed PWA');
                     }
                     this.hideInstallBanner();
                 });
@@ -151,20 +177,14 @@ const App = {
         if (banner) banner.remove();
     },
 
-    showInstallPrompt: function() {
-        const liveUsers = document.getElementById('liveUsers');
-        if (liveUsers && !window.matchMedia('(display-mode: standalone)').matches) {
-            // Not installed yet
-        }
-    },
-
-    // ===== ALARM TRIGGER FROM SERVICE WORKER =====
     setupAlarmListener: function() {
         if (!('serviceWorker' in navigator)) return;
 
+        console.log('[App] Setting up SW message listener');
         navigator.serviceWorker.addEventListener('message', (event) => {
+            console.log('[App] Message from SW:', event.data);
             if (event.data && event.data.type === 'TRIGGER_EMERGENCY_ALARM') {
-                console.log('SW triggered alarm!');
+                console.log('[App] SW triggered alarm!');
                 this.triggerIncomingAlarm(event.data.data);
             }
         });
@@ -172,8 +192,10 @@ const App = {
 
     checkUrlAlarmTrigger: function() {
         const params = new URLSearchParams(window.location.search);
+        console.log('[App] URL params:', window.location.search);
+
         if (params.get('alarm') === '1') {
-            console.log('App opened from alarm notification!');
+            console.log('[App] App opened from alarm notification!');
             const alertData = {
                 lat: params.get('lat'),
                 lng: params.get('lng'),
@@ -185,17 +207,23 @@ const App = {
             };
             setTimeout(() => {
                 this.triggerIncomingAlarm(alertData);
-            }, 500);
+            }, 800);
 
             window.history.replaceState({}, document.title, '/');
         }
     },
 
     triggerIncomingAlarm: function(alertData) {
+        console.log('[App] triggerIncomingAlarm:', alertData);
         if (window.Emergency && Emergency.handleIncomingAlert) {
             Emergency.handleIncomingAlert(alertData);
         } else {
-            console.error('Emergency module not loaded yet');
+            console.error('[App] Emergency not loaded, retrying...');
+            setTimeout(() => {
+                if (window.Emergency && Emergency.handleIncomingAlert) {
+                    Emergency.handleIncomingAlert(alertData);
+                }
+            }, 500);
         }
     },
 
@@ -213,7 +241,7 @@ const App = {
     },
 
     getVersion: function() {
-        return '4.1-pwa';
+        return '4.2-pwa';
     }
 };
 

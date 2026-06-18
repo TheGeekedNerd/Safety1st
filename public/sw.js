@@ -1,4 +1,4 @@
-const CACHE_NAME = 'soundalert-v4';
+const CACHE_NAME = 'soundalert-v5';
 const ASSETS = [
     '/',
     '/index.html',
@@ -15,7 +15,11 @@ const ASSETS = [
     '/emergency_alarm.mp3'
 ];
 
+// API routes that should NEVER be cached
+const API_ROUTES = ['/health', '/vapid-public-key', '/subscribe', '/broadcast'];
+
 self.addEventListener('install', function(event) {
+    console.log('[SW] Install event v5');
     event.waitUntil(
         caches.open(CACHE_NAME)
             .then(function(cache) {
@@ -23,26 +27,50 @@ self.addEventListener('install', function(event) {
                 return cache.addAll(ASSETS);
             })
             .then(function() {
+                console.log('[SW] Skip waiting');
                 return self.skipWaiting();
             })
+            .catch(err => console.error('[SW] Install failed:', err))
     );
 });
 
 self.addEventListener('activate', function(event) {
+    console.log('[SW] Activate event v5');
     event.waitUntil(
         caches.keys().then(function(cacheNames) {
             return Promise.all(
                 cacheNames.map(function(cacheName) {
                     if (cacheName !== CACHE_NAME) {
+                        console.log('[SW] Deleting old cache:', cacheName);
                         return caches.delete(cacheName);
                     }
                 })
             );
-        }).then(() => self.clients.claim())
+        }).then(() => {
+            console.log('[SW] Claiming clients');
+            return self.clients.claim();
+        })
     );
 });
 
 self.addEventListener('fetch', function(event) {
+    const url = new URL(event.request.url);
+
+    // NEVER cache API routes - always go to network
+    if (API_ROUTES.includes(url.pathname)) {
+        console.log('[SW] API route, fetching from network:', url.pathname);
+        event.respondWith(
+            fetch(event.request).catch(() => {
+                return new Response(JSON.stringify({ error: 'Network unavailable' }), {
+                    status: 503,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            })
+        );
+        return;
+    }
+
+    // For static assets, use cache-first
     event.respondWith(
         caches.match(event.request)
             .then(function(cachedResponse) {
@@ -76,12 +104,14 @@ self.addEventListener('fetch', function(event) {
 // ============================================
 
 self.addEventListener('push', function(event) {
-    console.log('[SW] Push received:', event);
+    console.log('[SW] PUSH EVENT RECEIVED');
 
     let data = {};
     try {
         data = event.data.json();
+        console.log('[SW] Push data:', JSON.stringify(data));
     } catch (e) {
+        console.error('[SW] Failed to parse push data:', e);
         data = {
             title: 'Emergency Alert',
             body: 'Someone needs help nearby!',
@@ -95,52 +125,69 @@ self.addEventListener('push', function(event) {
         badge: data.badge || '/badge-72.png',
         tag: data.tag || 'emergency',
         requireInteraction: true,
+        renotify: true,
         vibrate: [200, 100, 200, 100, 400, 100, 200],
-        actions: data.actions || [
+        actions: [
             { action: 'open', title: 'OPEN ALARM' },
             { action: 'dismiss', title: 'Dismiss' }
         ],
-        data: data.data || {}
+        data: data.data || data || {},
+        silent: false
     };
+
+    console.log('[SW] Showing notification');
 
     event.waitUntil(
         self.registration.showNotification(data.title || 'Emergency Alert!', options)
+            .then(() => console.log('[SW] Notification shown'))
+            .catch(err => console.error('[SW] Failed to show notification:', err))
     );
 });
 
 // Handle notification clicks
 self.addEventListener('notificationclick', function(event) {
-    console.log('[SW] Notification clicked:', event.action);
+    console.log('[SW] NOTIFICATION CLICK. Action:', event.action);
     event.notification.close();
 
     const alertData = event.notification.data || {};
+    console.log('[SW] Notification data:', JSON.stringify(alertData));
+
+    if (event.action === 'dismiss') {
+        console.log('[SW] User dismissed');
+        return;
+    }
 
     event.waitUntil(
         clients.matchAll({ type: 'window', includeUncontrolled: true })
             .then(function(clientList) {
-                // If app is already open, focus it and trigger alarm
+                console.log('[SW] Found clients:', clientList.length);
+
                 for (let client of clientList) {
+                    console.log('[SW] Client:', client.url);
                     if ('focus' in client) {
                         client.focus();
                         client.postMessage({
                             type: 'TRIGGER_EMERGENCY_ALARM',
                             data: alertData
                         });
+                        console.log('[SW] Message posted to client');
                         return;
                     }
                 }
-                // Otherwise open new window with alarm flag
+
+                console.log('[SW] No open client, opening new window');
                 if (clients.openWindow) {
                     const alarmUrl = alertData.lat && alertData.lng
                         ? `/?alarm=1&lat=${alertData.lat}&lng=${alertData.lng}&time=${Date.now()}`
                         : '/?alarm=1';
+                    console.log('[SW] Opening:', alarmUrl);
                     return clients.openWindow(alarmUrl);
                 }
             })
+            .catch(err => console.error('[SW] Error:', err))
     );
 });
 
-// Listen for messages from the page
 self.addEventListener('message', function(event) {
     if (event.data && event.data.type === 'KEEP_ALIVE') {
         event.ports[0]?.postMessage({ status: 'alive' });
