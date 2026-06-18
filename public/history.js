@@ -21,7 +21,7 @@ const History = {
     },
 
     /**
-     * Save an alert to history
+     * Save an alert to history (outgoing)
      */
     save: function(locationText) {
         const entry = {
@@ -35,7 +35,33 @@ const History = {
 
         this.entries.unshift(entry);
 
-        // Keep only max entries
+        if (this.entries.length > CONFIG.EMERGENCY.MAX_HISTORY) {
+            this.entries.length = CONFIG.EMERGENCY.MAX_HISTORY;
+        }
+
+        this.saveToStorage();
+        this.updateDisplay();
+        return entry;
+    },
+
+    /**
+     * Add an incoming alert from another device/server
+     */
+    addFromServer: function(alert) {
+        const entry = {
+            id: alert.id || Date.now().toString(36),
+            timestamp: alert.timestamp || new Date().toISOString(),
+            location: alert.location || 'Unknown location',
+            lat: alert.lat || null,
+            lng: alert.lng || null,
+            type: 'INCOMING'
+        };
+
+        // Avoid duplicates
+        if (this.entries.some(e => e.id === entry.id)) return;
+
+        this.entries.unshift(entry);
+
         if (this.entries.length > CONFIG.EMERGENCY.MAX_HISTORY) {
             this.entries.length = CONFIG.EMERGENCY.MAX_HISTORY;
         }
@@ -90,8 +116,9 @@ const History = {
         list.innerHTML = this.entries.slice(0, 10).map(item => {
             const time = new Date(item.timestamp).toLocaleString();
             const location = item.location || '📍 No GPS';
-            const mapLink = item.lat && item.lng ? 
-                `<a href="https://www.google.com/maps?q=${item.lat},${item.lng}" target="_blank" style="color:#1D9E75;text-decoration:none;">🗺️</a>` : 
+            const isIncoming = item.type === 'INCOMING';
+            const mapLink = item.lat && item.lng ?
+                `<a href="https://www.google.com/maps?q=${item.lat},${item.lng}" target="_blank" style="color:#1D9E75;text-decoration:none;">🗺️</a>` :
                 '';
 
             return `
@@ -104,7 +131,7 @@ const History = {
                         </svg>
                     </div>
                     <div class="history-body">
-                        <div class="h-type">Emergency</div>
+                        <div class="h-type">${isIncoming ? 'Incoming Alert' : 'Emergency'}</div>
                         <div class="h-location">${location} ${mapLink}</div>
                     </div>
                     <span class="h-time">${time}</span>

@@ -55,6 +55,14 @@ const GPS = {
         return this.currentLocation;
     },
 
+    _updateGPSPill: function(address) {
+        const gpsDisplay = document.getElementById('gpsDisplay');
+        if (gpsDisplay) {
+            const display = address.length > 28 ? address.substring(0, 26) + '…' : address;
+            gpsDisplay.textContent = display;
+        }
+    },
+
     init: function() {
         console.log('[GPS] GPS.init() called');
         if (!('geolocation' in navigator)) {
@@ -152,6 +160,8 @@ const GPS = {
             this.formattedAddress = address;
             console.log('[GPS] SUCCESS - Address:', address);
 
+            this._updateGPSPill(address);
+
             const alertDetail = document.getElementById('alertDetail');
             if (alertDetail && window.Emergency && Emergency.isAlerting) {
                 console.log('[GPS] Updating alertDetail UI');
@@ -184,6 +194,8 @@ const GPS = {
             this.formattedAddress = address;
             console.log('[GPS] SUCCESS (fallback) - Address:', address);
 
+            this._updateGPSPill(address);
+
             const alertDetail = document.getElementById('alertDetail');
             if (alertDetail && window.Emergency && Emergency.isAlerting) {
                 alertDetail.innerHTML = `
@@ -209,37 +221,46 @@ const GPS = {
         const addr = data.address;
         console.log('[GPS] Formatting address from:', JSON.stringify(addr));
 
-        const building = addr.building || addr['addr:housename'] || addr.historic || addr.tourism || addr.amenity;
+        // Priority 1: named building or place
+        const buildingName =
+            addr.building ||
+            addr['addr:housename'] ||
+            addr.amenity ||
+            addr.leisure ||
+            addr.tourism ||
+            addr.historic ||
+            addr.shop ||
+            addr.office ||
+            addr.university ||
+            addr.school ||
+            addr.hospital ||
+            addr.place;
+
+        // Priority 2: street address components
         const houseNumber = addr.house_number || addr['addr:housenumber'];
         const road = addr.road || addr.pedestrian || addr.footway || addr.street || addr.highway;
         const suburb = addr.suburb || addr.neighbourhood || addr.district || addr.borough;
         const city = addr.city || addr.town || addr.village || addr.hamlet || addr.municipality;
 
-        let parts = [];
-
-        if (building) {
-            parts.push(building);
+        // If we have a building/place name, prefer it: "Building Name, Suburb, City"
+        if (buildingName) {
+            const parts = [buildingName];
+            if (suburb) parts.push(suburb);
+            if (city && city !== suburb) parts.push(city);
+            return parts.join(', ');
         }
 
+        // Fallback: street address
+        const parts = [];
         if (houseNumber && road) {
             parts.push(`${houseNumber} ${road}`);
         } else if (road) {
             parts.push(road);
         }
+        if (suburb && !parts.some(p => p.includes(suburb))) parts.push(suburb);
+        if (city && !parts.some(p => p.includes(city))) parts.push(city);
 
-        if (suburb && !parts.some(p => p.includes(suburb))) {
-            parts.push(suburb);
-        }
-
-        if (city && !parts.some(p => p.includes(city))) {
-            parts.push(city);
-        }
-
-        if (parts.length === 0) {
-            return data.display_name || 'Unknown location';
-        }
-
-        return parts.join(', ');
+        return parts.length > 0 ? parts.join(', ') : (data.display_name || 'Unknown location');
     },
 
     formatBigDataCloud: function(data) {
