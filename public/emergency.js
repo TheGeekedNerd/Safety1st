@@ -86,9 +86,18 @@ const Emergency = {
             message: '🚨 EMERGENCY!'
         };
 
-        // --- BROADCAST VIA P2P ---
-        const peerCount = P2P.broadcastAlert(alertData);
-        console.log(`📡 Alert broadcast to ${peerCount} peers via P2P`);
+        // --- BROADCAST VIA SONIC (sound) ---
+        // This works even without internet, Bluetooth, or WiFi!
+        if (window.SonicAlert) {
+            SonicAlert.transmit(alertData);
+            console.log('📡 Alert broadcast via ULTRASONIC sound');
+        }
+
+        // Also try P2P as backup
+        if (window.P2P) {
+            const peerCount = P2P.broadcastAlert(alertData);
+            console.log(`📡 Alert broadcast to ${peerCount} peers via P2P`);
+        }
 
         // Also try Web Share API as backup
         if (navigator.share) {
