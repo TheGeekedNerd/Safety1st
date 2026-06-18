@@ -1,12 +1,14 @@
 {
   "name": "soundalert",
   "version": "1.0.0",
-  "description": "One-tap emergency alert system with real-time WebSocket broadcasting",
+  "description": "One-tap emergency alert system",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
+    "web-push": "^3.6.6",
     "ws": "^8.16.0"
   },
   "engines": {
