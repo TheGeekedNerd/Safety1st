@@ -247,38 +247,141 @@ Time: ${new Date().toLocaleString()}`
         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
       }
 
-      // Ensure audio context is running
       if (this.audioContext.state === 'suspended') {
         this.audioContext.resume();
       }
 
       const ctx = this.audioContext;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.type = 'sawtooth';
       const now = ctx.currentTime;
 
-      osc.frequency.setValueAtTime(600, now);
-      osc.frequency.linearRampToValueAtTime(900, now + 0.3);
-      osc.frequency.linearRampToValueAtTime(600, now + 0.6);
-      osc.frequency.linearRampToValueAtTime(900, now + 0.9);
-      osc.frequency.linearRampToValueAtTime(600, now + 1.2);
+      // MASTER GAIN - Start at 0 to avoid click, then ramp up
+      const masterGain = ctx.createGain();
+      masterGain.gain.setValueAtTime(0, now);
+      masterGain.gain.linearRampToValueAtTime(1.0, now + 0.05); // Full volume
+      masterGain.connect(ctx.destination);
 
-      gain.gain.setValueAtTime(0.3, now);
-      gain.gain.linearRampToValueAtTime(0, now + 1.5);
+      // COMPRESSOR - Makes it louder and more aggressive
+      const compressor = ctx.createDynamicsCompressor();
+      compressor.threshold.setValueAtTime(-24, now);
+      compressor.knee.setValueAtTime(0, now);
+      compressor.ratio.setValueAtTime(20, now);
+      compressor.attack.setValueAtTime(0.003, now);
+      compressor.release.setValueAtTime(0.1, now);
+      compressor.connect(masterGain);
 
-      osc.start(now);
-      osc.stop(now + 1.5);
+      // DISTORTION - For aggressive alarm sound
+      const distortion = ctx.createWaveShaper();
+      distortion.curve = this.makeDistortionCurve(50);
+      distortion.oversample = '4x';
+      distortion.connect(compressor);
 
-      console.log('✅ Alert sound played');
+      // MAIN OSCILLATOR 1 - Siren sweep
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sawtooth';
+      osc1.connect(gain1);
+      gain1.connect(distortion);
+
+      // Siren pattern: 800Hz → 1200Hz → 800Hz (classic alarm)
+      const sirenDuration = 0.6;
+      for (let i = 0; i < 5; i++) { // 5 siren cycles
+        const t = now + (i * sirenDuration);
+        osc1.frequency.setValueAtTime(800, t);
+        osc1.frequency.linearRampToValueAtTime(1200, t + 0.3);
+        osc1.frequency.linearRampToValueAtTime(800, t + 0.6);
+      }
+
+      gain1.gain.setValueAtTime(0.4, now);
+      gain1.gain.setValueAtTime(0.4, now + 3.0);
+      gain1.gain.linearRampToValueAtTime(0, now + 3.5);
+
+      // MAIN OSCILLATOR 2 - Square wave for buzzer effect
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'square';
+      osc2.connect(gain2);
+      gain2.connect(distortion);
+
+      // Lower tone for depth
+      for (let i = 0; i < 5; i++) {
+        const t = now + (i * sirenDuration);
+        osc2.frequency.setValueAtTime(400, t);
+        osc2.frequency.linearRampToValueAtTime(600, t + 0.3);
+        osc2.frequency.linearRampToValueAtTime(400, t + 0.6);
+      }
+
+      gain2.gain.setValueAtTime(0.3, now);
+      gain2.gain.setValueAtTime(0.3, now + 3.0);
+      gain2.gain.linearRampToValueAtTime(0, now + 3.5);
+
+      // HIGH PITCHED BEEP - Penetrating tone
+      const osc3 = ctx.createOscillator();
+      const gain3 = ctx.createGain();
+      osc3.type = 'sine';
+      osc3.connect(gain3);
+      gain3.connect(compressor); // Skip distortion for clarity
+
+      // Rapid beeping
+      for (let i = 0; i < 30; i++) {
+        const t = now + (i * 0.1);
+        gain3.gain.setValueAtTime(0.5, t);
+        gain3.gain.setValueAtTime(0, t + 0.05);
+      }
+      osc3.frequency.setValueAtTime(2000, now);
+
+      // NOISE - For texture (white noise burst)
+      const bufferSize = ctx.sampleRate * 3;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      const noise = ctx.createBufferSource();
+      noise.buffer = buffer;
+      const noiseGain = ctx.createGain();
+      noiseGain.gain.setValueAtTime(0.1, now);
+      noiseGain.gain.linearRampToValueAtTime(0, now + 1.0);
+      noise.connect(noiseGain);
+      noiseGain.connect(compressor);
+
+      // Start everything
+      osc1.start(now);
+      osc1.stop(now + 3.5);
+      osc2.start(now);
+      osc2.stop(now + 3.5);
+      osc3.start(now);
+      osc3.stop(now + 3.0);
+      noise.start(now);
+
+      // Fade out master
+      masterGain.gain.setValueAtTime(1.0, now + 3.0);
+      masterGain.gain.linearRampToValueAtTime(0, now + 3.5);
+
+      console.log('✅ LOUD ALARM sound played (3.5s)');
 
     } catch(e) {
       console.error('❌ Failed to play sound:', e);
     }
+  },
+
+  makeDistortionCurve: function(amount) {
+    const samples = 44100;
+    const curve = new Float32Array(samples);
+    const deg = Math.PI / 180;
+    for (let i = 0; i < samples; i++) {
+      const x = (i * 2) / samples - 1;
+      curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x));
+    }
+    return curve;
+  },
+
+  /**
+   * Test alarm sound (for debugging)
+   */
+  testSound: function() {
+    console.log('🔊 Testing alarm sound...');
+    this.initAudio();
+    this.playAlertSound();
   },
 
   isActive: function() {
