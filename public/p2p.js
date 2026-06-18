@@ -15,22 +15,18 @@ const P2P = {
     },
 
     init: function() {
-        // Generate unique ID using crypto if available
         if (window.crypto && crypto.randomUUID) {
             this.localId = crypto.randomUUID().split('-')[0];
         } else {
             this.localId = 'user_' + Math.random().toString(36).substr(2, 6);
         }
 
-        // Show my ID on screen
         this.showMyId();
-
         this.log('Init with ID:', this.localId);
         this.connectSignaling();
     },
 
     showMyId: function() {
-        // Add my ID to the UI so user knows which device is which
         let idDisplay = document.getElementById('myDeviceId');
         if (!idDisplay) {
             idDisplay = document.createElement('div');
@@ -55,7 +51,7 @@ const P2P = {
             this.signalingSocket = new WebSocket(wsUrl);
 
             this.signalingSocket.onopen = () => {
-                this.log('✅ Signaling connected');
+                this.log('Signaling connected');
                 this.updateConnectionStatus('connected');
                 setTimeout(() => {
                     this.sendSignal({ type: 'peer-hello', from: this.localId });
@@ -65,7 +61,7 @@ const P2P = {
             this.signalingSocket.onmessage = (event) => {
                 try {
                     const msg = JSON.parse(event.data);
-                    this.log('📨 Received:', msg.type, 'from', msg.from);
+                    this.log('Received:', msg.type, 'from', msg.from);
                     this.handleSignalingMessage(msg);
                 } catch (e) {
                     console.error('[P2P] Invalid msg:', e);
@@ -73,7 +69,7 @@ const P2P = {
             };
 
             this.signalingSocket.onclose = () => {
-                this.log('🔌 Signaling disconnected');
+                this.log('Signaling disconnected');
                 this.updateConnectionStatus('disconnected');
                 setTimeout(() => this.connectSignaling(), 3000);
             };
@@ -102,16 +98,16 @@ const P2P = {
 
         switch (msg.type) {
             case 'peer-hello':
-                this.log('👋 Peer hello from:', from);
+                this.log('Peer hello from:', from);
                 this.createPeerConnection(from);
                 this.sendOffer(from);
                 break;
             case 'offer':
-                this.log('📡 Offer from:', from);
+                this.log('Offer from:', from);
                 this.handleOffer(from, msg.sdp);
                 break;
             case 'answer':
-                this.log('📡 Answer from:', from);
+                this.log('Answer from:', from);
                 this.handleAnswer(from, msg.sdp);
                 break;
             case 'ice-candidate':
@@ -137,7 +133,7 @@ const P2P = {
 
         pc.onicecandidate = (event) => {
             if (event.candidate) {
-                this.log('🧊 Sending ICE candidate to:', peerId);
+                this.log('Sending ICE candidate to:', peerId);
                 this.sendSignal({
                     type: 'ice-candidate',
                     to: peerId,
@@ -161,7 +157,7 @@ const P2P = {
         };
 
         pc.ondatachannel = (event) => {
-            this.log('📡 Data channel received from:', peerId);
+            this.log('Data channel received from:', peerId);
             this.setupDataChannel(peerId, event.channel);
         };
 
@@ -173,13 +169,13 @@ const P2P = {
         this.dataChannels.set(peerId, channel);
 
         channel.onopen = () => {
-            this.log('✅ Data channel OPEN with:', peerId);
+            this.log('Data channel OPEN with:', peerId);
             this.connectedPeers.add(peerId);
             this.updatePeerDisplay();
         };
 
         channel.onmessage = (event) => {
-            this.log('📨 P2P message from:', peerId);
+            this.log('P2P message from:', peerId);
             try {
                 const data = JSON.parse(event.data);
                 this.handleP2PMessage(data, peerId);
@@ -189,7 +185,7 @@ const P2P = {
         };
 
         channel.onclose = () => {
-            this.log('📡 Data channel CLOSED with:', peerId);
+            this.log('Data channel CLOSED with:', peerId);
             this.connectedPeers.delete(peerId);
             this.dataChannels.delete(peerId);
             this.updatePeerDisplay();
@@ -217,7 +213,7 @@ const P2P = {
                 from: this.localId,
                 sdp: pc.localDescription
             });
-            this.log('📡 Offer sent to:', peerId);
+            this.log('Offer sent to:', peerId);
         } catch (e) {
             console.error('[P2P] Failed to create offer:', e);
         }
@@ -238,7 +234,7 @@ const P2P = {
                 from: this.localId,
                 sdp: pc.localDescription
             });
-            this.log('📡 Answer sent to:', peerId);
+            this.log('Answer sent to:', peerId);
         } catch (e) {
             console.error('[P2P] Failed to handle offer:', e);
         }
@@ -276,7 +272,7 @@ const P2P = {
                 try {
                     channel.send(message);
                     sentCount++;
-                    this.log('📡 Alert sent to peer:', peerId);
+                    this.log('Alert sent to peer:', peerId);
                 } catch (e) {
                     console.error(`[P2P] Failed to send to ${peerId}:`, e);
                 }
@@ -285,14 +281,14 @@ const P2P = {
             }
         });
 
-        this.log(`📡 Total peers alerted: ${sentCount}`);
+        this.log(`Total peers alerted: ${sentCount}`);
         return sentCount;
     },
 
     handleP2PMessage: function(data, fromPeerId) {
         switch (data.type) {
             case 'emergency':
-                this.log('🚨 INCOMING ALERT from:', fromPeerId);
+                this.log('INCOMING ALERT from:', fromPeerId);
                 Emergency.handleIncomingAlert(data.data);
                 break;
         }
@@ -351,9 +347,9 @@ const P2P = {
                 <div class="device-row">
                     <span class="device-name">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
-                        📱 User ${peerId.substr(-4).toUpperCase()}
+                        User ${peerId.substr(-4).toUpperCase()}
                     </span>
-                    <span class="badge online">🟢 Connected</span>
+                    <span class="badge online">Connected</span>
                 </div>
             `;
         });

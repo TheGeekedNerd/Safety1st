@@ -52,9 +52,10 @@ const Emergency = {
 
     if (btnZone) btnZone.classList.add('alerting');
 
+    // Use GPS.getFormattedLocation() which now returns building name/address
     const locationText = GPS.isAvailable() ?
       GPS.getFormattedLocation() :
-      '📍 No GPS';
+      'No GPS';
 
     const alertDetail = document.getElementById('alertDetail');
     if (alertDetail) {
@@ -70,38 +71,38 @@ const Emergency = {
       location: locationText,
       lat: GPS.currentLocation ? GPS.currentLocation.lat : null,
       lng: GPS.currentLocation ? GPS.currentLocation.lng : null,
-      message: '🚨 EMERGENCY!'
+      message: 'EMERGENCY!'
     };
 
-    console.log('🚨 EMERGENCY TRIGGERED');
-    console.log('📍 Location:', locationText);
-    console.log('📡 Starting 3-channel broadcast...');
+    console.log('EMERGENCY TRIGGERED');
+    console.log('Location:', locationText);
+    console.log('Starting 3-channel broadcast...');
 
     // CHANNEL 1: Sonic
     if (window.SonicAlert) {
-      console.log('📡 Channel 1: Sonic transmit starting...');
+      console.log('Channel 1: Sonic transmit starting...');
       SonicAlert.transmit(alertData);
     } else {
-      console.log('❌ Channel 1: SonicAlert not available');
+      console.log('Channel 1: SonicAlert not available');
     }
 
     // CHANNEL 2: P2P
     if (window.P2P) {
       const peerCount = P2P.broadcastAlert(alertData);
-      console.log(`📡 Channel 2: P2P sent to ${peerCount} peers`);
+      console.log(`Channel 2: P2P sent to ${peerCount} peers`);
     } else {
-      console.log('❌ Channel 2: P2P not available');
+      console.log('Channel 2: P2P not available');
     }
 
     // CHANNEL 3: Push
-    console.log('📡 Channel 3: Push notification starting...');
+    console.log('Channel 3: Push notification starting...');
     this.sendPushNotification(alertData);
 
     // Backup: Web Share
     if (navigator.share) {
       navigator.share({
-        title: '🚨 Emergency Alert',
-        text: `🚨 EMERGENCY!
+        title: 'Emergency Alert',
+        text: `EMERGENCY!
 ${locationText}
 Time: ${new Date().toLocaleString()}`,
         url: window.location.href
@@ -110,7 +111,7 @@ Time: ${new Date().toLocaleString()}`,
 
     if (navigator.clipboard) {
       navigator.clipboard.writeText(
-        `🚨 EMERGENCY!
+        `EMERGENCY!
 ${locationText}
 Time: ${new Date().toLocaleString()}`
       ).catch(() => {});
@@ -119,11 +120,11 @@ Time: ${new Date().toLocaleString()}`
     History.save(locationText);
 
     // Sound + vibration
-    console.log('🔊 Playing alert sound...');
+    console.log('Playing alert sound...');
     this.playAlertSound();
 
     if (navigator.vibrate) {
-      console.log('📳 Vibrating...');
+      console.log('Vibrating...');
       navigator.vibrate([200, 100, 200, 100, 400]);
     }
 
@@ -135,7 +136,7 @@ Time: ${new Date().toLocaleString()}`
 
   sendPushNotification: async function(alertData) {
     try {
-      console.log('📡 Sending push to server...');
+      console.log('Sending push to server...');
       const response = await fetch('/broadcast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -143,10 +144,10 @@ Time: ${new Date().toLocaleString()}`
       });
 
       const result = await response.json();
-      console.log(`✅ Push sent to ${result.sent} devices`);
+      console.log(`Push sent to ${result.sent} devices`);
 
     } catch (err) {
-      console.error('❌ Push broadcast failed:', err);
+      console.error('Push broadcast failed:', err);
     }
   },
 
@@ -188,7 +189,7 @@ Time: ${new Date().toLocaleString()}`
   },
 
   handleIncomingAlert: function(alert) {
-    console.log('🚨 INCOMING ALERT:', alert);
+    console.log('INCOMING ALERT:', alert);
 
     const overlay = document.getElementById('incomingAlert');
     const locationEl = document.getElementById('incomingLocation');
@@ -196,7 +197,7 @@ Time: ${new Date().toLocaleString()}`
     const mapLink = document.getElementById('incomingMap');
 
     if (overlay) {
-      locationEl.textContent = alert.location || '📍 Location unknown';
+      locationEl.textContent = alert.location || 'Location unknown';
       timeEl.textContent = new Date(alert.timestamp).toLocaleString();
 
       if (alert.lat && alert.lng) {
@@ -210,7 +211,7 @@ Time: ${new Date().toLocaleString()}`
       overlay.classList.add('show');
     }
 
-    console.log('🔊 Playing incoming alert sound...');
+    console.log('Playing incoming alert sound...');
     this.playAlertSound();
 
     if (navigator.vibrate) {
@@ -218,7 +219,7 @@ Time: ${new Date().toLocaleString()}`
     }
 
     if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification('🚨 EMERGENCY ALERT!', {
+      new Notification('EMERGENCY ALERT!', {
         body: `Someone needs help! ${alert.location}`,
         requireInteraction: true
       });
@@ -236,18 +237,16 @@ Time: ${new Date().toLocaleString()}`
   },
 
   playAlertSound: function() {
-    console.log('🔊 playAlertSound called');
+    console.log('playAlertSound called');
     if (!CONFIG.NOTIFICATIONS.SOUND) {
-      console.log('❌ Sound disabled in config');
+      console.log('Sound disabled in config');
       return;
     }
 
     try {
-      // Use the MP3 alarm file
       const audio = new Audio('emergency_alarm.mp3');
-      audio.volume = 1.0; // Max volume
+      audio.volume = 1.0;
 
-      // Play and loop for 3 iterations
       let playCount = 0;
       const maxPlays = 3;
 
@@ -257,27 +256,23 @@ Time: ${new Date().toLocaleString()}`
           audio.currentTime = 0;
           audio.play().catch(e => console.log('Audio replay failed:', e));
         } else {
-          console.log('✅ Alarm finished (played ' + maxPlays + ' times)');
+          console.log('Alarm finished (played ' + maxPlays + ' times)');
         }
       };
 
       audio.play().then(() => {
-        console.log('✅ LOUD ALARM playing from MP3');
+        console.log('LOUD ALARM playing from MP3');
       }).catch(err => {
-        console.error('❌ Audio play failed:', err);
-        // Fallback to synthesized sound
+        console.error('Audio play failed:', err);
         this.playFallbackSound();
       });
 
     } catch(e) {
-      console.error('❌ Failed to play sound:', e);
+      console.error('Failed to play sound:', e);
       this.playFallbackSound();
     }
   },
 
-  /**
-   * Fallback synthesized alarm (if MP3 fails)
-   */
   playFallbackSound: function() {
     try {
       if (!this.audioContext) {
@@ -325,18 +320,15 @@ Time: ${new Date().toLocaleString()}`
       masterGain.gain.setValueAtTime(1.0, now + 3.0);
       masterGain.gain.linearRampToValueAtTime(0, now + 3.5);
 
-      console.log('✅ Fallback alarm played');
+      console.log('Fallback alarm played');
 
     } catch(e) {
-      console.error('❌ Fallback sound failed:', e);
+      console.error('Fallback sound failed:', e);
     }
   },
 
-  /**
-   * Test alarm sound (for debugging)
-   */
   testSound: function() {
-    console.log('🔊 Testing alarm sound...');
+    console.log('Testing alarm sound...');
     this.initAudio();
     this.playAlertSound();
   },
