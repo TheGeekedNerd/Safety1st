@@ -1,4 +1,4 @@
-const CACHE_NAME = 'soundalert-v6';
+const CACHE_NAME = 'soundalert-v7';
 const ASSETS = [
     '/',
     '/index.html',
@@ -15,107 +15,81 @@ const ASSETS = [
     '/emergency_alarm.mp3'
 ];
 
-// API routes that should NEVER be cached
 const API_ROUTES = ['/health', '/vapid-public-key', '/subscribe', '/broadcast'];
 
 self.addEventListener('install', function(event) {
-    console.log('[SW] Install event v5');
+    console.log('[SW] Install v7');
     event.waitUntil(
         caches.open(CACHE_NAME)
-            .then(function(cache) {
-                console.log('[SW] Caching assets...');
-                return cache.addAll(ASSETS);
-            })
-            .then(function() {
-                console.log('[SW] Skip waiting');
-                return self.skipWaiting();
-            })
+            .then(cache => cache.addAll(ASSETS))
+            .then(() => self.skipWaiting())
             .catch(err => console.error('[SW] Install failed:', err))
     );
 });
 
 self.addEventListener('activate', function(event) {
-    console.log('[SW] Activate event v5');
+    console.log('[SW] Activate v7');
     event.waitUntil(
-        caches.keys().then(function(cacheNames) {
-            return Promise.all(
-                cacheNames.map(function(cacheName) {
-                    if (cacheName !== CACHE_NAME) {
-                        console.log('[SW] Deleting old cache:', cacheName);
-                        return caches.delete(cacheName);
-                    }
-                })
-            );
-        }).then(() => {
-            console.log('[SW] Claiming clients');
-            return self.clients.claim();
-        })
+        caches.keys().then(cacheNames => Promise.all(
+            cacheNames.map(name => {
+                if (name !== CACHE_NAME) {
+                    console.log('[SW] Deleting old cache:', name);
+                    return caches.delete(name);
+                }
+            })
+        )).then(() => self.clients.claim())
     );
 });
 
 self.addEventListener('fetch', function(event) {
     const url = new URL(event.request.url);
 
-    // NEVER cache API routes - always go to network
     if (API_ROUTES.includes(url.pathname)) {
-        console.log('[SW] API route, fetching from network:', url.pathname);
         event.respondWith(
-            fetch(event.request).catch(() => {
-                return new Response(JSON.stringify({ error: 'Network unavailable' }), {
+            fetch(event.request).catch(() =>
+                new Response(JSON.stringify({ error: 'Network unavailable' }), {
                     status: 503,
                     headers: { 'Content-Type': 'application/json' }
-                });
-            })
+                })
+            )
         );
         return;
     }
 
-    // For static assets, use cache-first
     event.respondWith(
-        caches.match(event.request)
-            .then(function(cachedResponse) {
-                if (cachedResponse) {
-                    return cachedResponse;
+        caches.match(event.request).then(cachedResponse => {
+            if (cachedResponse) return cachedResponse;
+            return fetch(event.request).then(networkResponse => {
+                if (networkResponse && networkResponse.status === 200) {
+                    const clone = networkResponse.clone();
+                    caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
                 }
-                return fetch(event.request)
-                    .then(function(networkResponse) {
-                        if (networkResponse && networkResponse.status === 200) {
-                            const responseClone = networkResponse.clone();
-                            caches.open(CACHE_NAME)
-                                .then(function(cache) {
-                                    cache.put(event.request, responseClone);
-                                });
-                        }
-                        return networkResponse;
-                    })
-                    .catch(function() {
-                        return new Response('[SW] Offline', {
-                            status: 503,
-                            statusText: 'Service Unavailable',
-                            headers: { 'Content-Type': 'text/plain' }
-                        });
-                    });
-            })
+                return networkResponse;
+            }).catch(() =>
+                new Response('[SW] Offline', {
+                    status: 503,
+                    statusText: 'Service Unavailable',
+                    headers: { 'Content-Type': 'text/plain' }
+                })
+            );
+        })
     );
 });
 
 // ============================================
-// PUSH NOTIFICATIONS + ALARM TRIGGER
+// PUSH NOTIFICATIONS
 // ============================================
 
 self.addEventListener('push', function(event) {
-    console.log('[SW] PUSH EVENT RECEIVED');
+    console.log('[SW] Push received');
 
     let data = {};
     try {
         data = event.data.json();
-        console.log('[SW] Push data:', JSON.stringify(data));
     } catch (e) {
-        console.error('[SW] Failed to parse push data:', e);
         data = {
             title: 'Emergency Alert',
-            body: 'Someone needs help nearby!',
-            icon: '/icon-192.png'
+            body: 'Someone needs help nearby!'
         };
     }
 
@@ -131,60 +105,54 @@ self.addEventListener('push', function(event) {
             { action: 'open', title: 'OPEN ALARM' },
             { action: 'dismiss', title: 'Dismiss' }
         ],
-        data: data.data || data || {},
+        data: data.data || {},
         silent: false
     };
 
-    console.log('[SW] Showing notification');
-
     event.waitUntil(
         self.registration.showNotification(data.title || 'Emergency Alert!', options)
-            .then(() => console.log('[SW] Notification shown'))
-            .catch(err => console.error('[SW] Failed to show notification:', err))
     );
 });
 
-// Handle notification clicks
 self.addEventListener('notificationclick', function(event) {
-    console.log('[SW] NOTIFICATION CLICK. Action:', event.action);
+    console.log('[SW] Notification click. Action:', event.action);
     event.notification.close();
 
     const alertData = event.notification.data || {};
-    console.log('[SW] Notification data:', JSON.stringify(alertData));
-
-    if (event.action === 'dismiss') {
-        console.log('[SW] User dismissed');
-        return;
-    }
+    if (event.action === 'dismiss') return;
 
     event.waitUntil(
         clients.matchAll({ type: 'window', includeUncontrolled: true })
-            .then(function(clientList) {
-                console.log('[SW] Found clients:', clientList.length);
-
+            .then(clientList => {
+                // If app is already open, post message directly
                 for (let client of clientList) {
-                    console.log('[SW] Client:', client.url);
                     if ('focus' in client) {
                         client.focus();
                         client.postMessage({
                             type: 'TRIGGER_EMERGENCY_ALARM',
                             data: alertData
                         });
-                        console.log('[SW] Message posted to client');
                         return;
                     }
                 }
 
-                console.log('[SW] No open client, opening new window');
+                // App not open — build URL with all alertType fields so
+                // checkUrlAlarmTrigger can reconstruct the full alert
                 if (clients.openWindow) {
-                    const alarmUrl = alertData.lat && alertData.lng
-                        ? `/?alarm=1&lat=${alertData.lat}&lng=${alertData.lng}&time=${Date.now()}`
-                        : '/?alarm=1';
-                    console.log('[SW] Opening:', alarmUrl);
-                    return clients.openWindow(alarmUrl);
+                    const params = new URLSearchParams({ alarm: '1' });
+                    if (alertData.alertType)      params.set('alertType', alertData.alertType);
+                    if (alertData.alertTypeLabel)  params.set('alertTypeLabel', alertData.alertTypeLabel);
+                    if (alertData.alertTypeShort)  params.set('alertTypeShort', alertData.alertTypeShort);
+                    if (alertData.alertTypeColor)  params.set('alertTypeColor', alertData.alertTypeColor);
+                    if (alertData.lat)             params.set('lat', alertData.lat);
+                    if (alertData.lng)             params.set('lng', alertData.lng);
+                    if (alertData.location)        params.set('location', encodeURIComponent(alertData.location));
+                    if (alertData.id)              params.set('id', alertData.id);
+                    if (alertData.timestamp)       params.set('ts', alertData.timestamp);
+
+                    return clients.openWindow('/?' + params.toString());
                 }
             })
-            .catch(err => console.error('[SW] Error:', err))
     );
 });
 

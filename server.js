@@ -6,17 +6,12 @@ const webpush = require('web-push');
 
 const PORT = process.env.PORT || 3000;
 
-// ============================================
-// VAPID KEYS for Push Notifications
-// Generate once with: npx web-push generate-vapid-keys
-// ============================================
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BEl62iSMf-VZBdg3Zp5DzR7U8C4r-KB0fG0x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x';
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BEl62iSMf-VZBdg3Zp5DzR7U8C4r-KB0fG0x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x';
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x';
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:soundalert@example.com';
 
 webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
-// Store push subscriptions
 const subscriptions = new Set();
 
 const mimeTypes = {
@@ -27,11 +22,11 @@ const mimeTypes = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
-  '.ico': 'image/x-icon'
+  '.ico': 'image/x-icon',
+  '.mp3': 'audio/mpeg'
 };
 
 const server = http.createServer((req, res) => {
-  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -42,21 +37,18 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Health check
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', subscribers: subscriptions.size }));
     return;
   }
 
-  // Get VAPID public key
   if (req.url === '/vapid-public-key') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ publicKey: VAPID_PUBLIC_KEY }));
     return;
   }
 
-  // Subscribe to push notifications
   if (req.url === '/subscribe' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => body += chunk);
@@ -75,18 +67,25 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Send push notification to all subscribers
+  // Broadcast push notification to all subscribers
   if (req.url === '/broadcast' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
         const alert = JSON.parse(body);
-        console.log('Broadcasting push to', subscriptions.size, 'subscribers');
+        console.log('Broadcasting to', subscriptions.size, 'subscribers. Type:', alert.alertType);
+
+        // Build a human-readable title using the alert type
+        const typeLabel = alert.alertTypeLabel || 'EMERGENCY';
+        const notifTitle = `🚨 ${typeLabel.toUpperCase()} ALERT!`;
+        const notifBody = alert.location
+          ? `${alert.location}`
+          : 'Someone needs help nearby!';
 
         const payload = JSON.stringify({
-          title: 'EMERGENCY ALERT!',
-          body: alert.location || 'Someone needs help nearby!',
+          title: notifTitle,
+          body: notifBody,
           icon: '/icon-192.png',
           badge: '/badge-72.png',
           tag: 'emergency-' + (alert.id || Date.now()),
@@ -96,13 +95,24 @@ const server = http.createServer((req, res) => {
             { action: 'dismiss', title: 'Dismiss' }
           ],
           data: {
+            // Alert type — the critical fields that were missing
+            alertType: alert.alertType || null,
+            alertTypeLabel: alert.alertTypeLabel || null,
+            alertTypeShort: alert.alertTypeShort || null,
+            alertTypeColor: alert.alertTypeColor || null,
+            // Location
             lat: alert.lat || null,
             lng: alert.lng || null,
             location: alert.location || 'Unknown location',
+            // Meta
+            id: alert.id || null,
+            timestamp: alert.timestamp || new Date().toISOString(),
+            timeFormatted: alert.timeFormatted || null,
+            message: alert.message || notifTitle,
+            description: alert.description || null,
             url: alert.lat && alert.lng
               ? `https://www.google.com/maps?q=${alert.lat},${alert.lng}`
-              : '/',
-            timestamp: alert.timestamp || new Date().toISOString()
+              : '/'
           }
         });
 
@@ -160,21 +170,18 @@ const server = http.createServer((req, res) => {
   });
 });
 
-// WebSocket for real-time (P2P signaling + Sonic is client-side)
+// WebSocket for real-time P2P signaling
 const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws, req) => {
   const clientId = Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
   console.log(`Client connected: ${clientId} (${wss.clients.size} total)`);
-
   ws.clientId = clientId;
 
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message);
       data.from = clientId;
-
-      // Forward to all other clients (P2P signaling)
       const msg = JSON.stringify(data);
       wss.clients.forEach((client) => {
         if (client !== ws && client.readyState === WebSocket.OPEN) {

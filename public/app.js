@@ -16,20 +16,8 @@ const App = {
         this.requestNotificationPermission();
         this.setupInstallPrompt();
         this.updateStatus();
-
         this.setupAlarmListener();
         this.checkUrlAlarmTrigger();
-
-        const btn = document.getElementById('emergencyBtn');
-        if (btn) {
-            btn.addEventListener('touchstart', function() {
-                this.style.transform = 'scale(0.96)';
-            }, { passive: true });
-
-            btn.addEventListener('touchend', function() {
-                this.style.transform = '';
-            }, { passive: true });
-        }
     },
 
     registerSW: async function() {
@@ -39,18 +27,13 @@ const App = {
         }
 
         try {
-            // Unregister old SWs first to force update
-            console.log('[App] Checking for old SWs...');
             const oldRegistrations = await navigator.serviceWorker.getRegistrations();
             for (let reg of oldRegistrations) {
-                console.log('[App] Unregistering old SW:', reg.scope);
                 await reg.unregister();
             }
 
             const registration = await navigator.serviceWorker.register('sw.js');
             console.log('[App] SW registered, scope:', registration.scope);
-
-            // Force update check
             registration.update();
 
             await navigator.serviceWorker.ready;
@@ -64,36 +47,25 @@ const App = {
 
     subscribeToPush: async function(registration) {
         try {
-            console.log('[App] Fetching VAPID key...');
             const response = await fetch('/vapid-public-key');
-            if (!response.ok) {
-                throw new Error('Failed to fetch VAPID key: ' + response.status);
-            }
+            if (!response.ok) throw new Error('Failed to fetch VAPID key: ' + response.status);
             const { publicKey } = await response.json();
-            console.log('[App] Got VAPID key');
 
-            console.log('[App] Subscribing to push...');
             const subscription = await registration.pushManager.subscribe({
                 userVisibleOnly: true,
                 applicationServerKey: this.urlBase64ToUint8Array(publicKey)
             });
 
-            console.log('[App] Push subscription created');
             this.pushSubscription = subscription;
 
-            console.log('[App] Sending subscription to server...');
             const subResponse = await fetch('/subscribe', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(subscription)
             });
 
-            if (!subResponse.ok) {
-                throw new Error('Server rejected subscription: ' + subResponse.status);
-            }
-
-            const subResult = await subResponse.json();
-            console.log('[App] Subscription saved:', subResult);
+            if (!subResponse.ok) throw new Error('Server rejected subscription: ' + subResponse.status);
+            console.log('[App] Push subscription saved');
             this.showInstallPrompt();
 
         } catch (err) {
@@ -106,10 +78,8 @@ const App = {
         const base64 = (base64String + padding)
             .replace(/\-/g, '+')
             .replace(/_/g, '/');
-
         const rawData = window.atob(base64);
         const outputArray = new Uint8Array(rawData.length);
-
         for (let i = 0; i < rawData.length; ++i) {
             outputArray[i] = rawData.charCodeAt(i);
         }
@@ -118,11 +88,8 @@ const App = {
 
     requestNotificationPermission: async function() {
         if (!('Notification' in window)) return;
-
-        console.log('[App] Notification permission:', Notification.permission);
         if (Notification.permission === 'default') {
-            const permission = await Notification.requestPermission();
-            console.log('[App] Permission result:', permission);
+            await Notification.requestPermission();
         }
     },
 
@@ -136,7 +103,6 @@ const App = {
         });
 
         window.addEventListener('appinstalled', () => {
-            console.log('[App] PWA installed');
             deferredPrompt = null;
             this.hideInstallBanner();
         });
@@ -159,9 +125,6 @@ const App = {
             document.getElementById('installBtn').addEventListener('click', () => {
                 deferredPrompt.prompt();
                 deferredPrompt.userChoice.then((choice) => {
-                    if (choice.outcome === 'accepted') {
-                        console.log('[App] User installed PWA');
-                    }
                     this.hideInstallBanner();
                 });
             });
@@ -180,11 +143,9 @@ const App = {
     setupAlarmListener: function() {
         if (!('serviceWorker' in navigator)) return;
 
-        console.log('[App] Setting up SW message listener');
         navigator.serviceWorker.addEventListener('message', (event) => {
             console.log('[App] Message from SW:', event.data);
             if (event.data && event.data.type === 'TRIGGER_EMERGENCY_ALARM') {
-                console.log('[App] SW triggered alarm!');
                 this.triggerIncomingAlarm(event.data.data);
             }
         });
@@ -192,25 +153,31 @@ const App = {
 
     checkUrlAlarmTrigger: function() {
         const params = new URLSearchParams(window.location.search);
-        console.log('[App] URL params:', window.location.search);
+        if (params.get('alarm') !== '1') return;
 
-        if (params.get('alarm') === '1') {
-            console.log('[App] App opened from alarm notification!');
-            const alertData = {
-                lat: params.get('lat'),
-                lng: params.get('lng'),
-                timestamp: new Date().toISOString(),
-                location: params.get('lat')
-                    ? `${params.get('lat')}, ${params.get('lng')}`
-                    : 'Location unknown',
-                type: 'push'
-            };
-            setTimeout(() => {
-                this.triggerIncomingAlarm(alertData);
-            }, 800);
+        console.log('[App] Opened from alarm notification');
 
-            window.history.replaceState({}, document.title, '/');
-        }
+        // Reconstruct full alertData from URL params — including alertType
+        const alertData = {
+            id: params.get('id') || null,
+            alertType: params.get('alertType') || null,
+            alertTypeLabel: params.get('alertTypeLabel') || null,
+            alertTypeShort: params.get('alertTypeShort') || null,
+            alertTypeColor: params.get('alertTypeColor') || null,
+            lat: params.get('lat') || null,
+            lng: params.get('lng') || null,
+            location: params.get('location')
+                ? decodeURIComponent(params.get('location'))
+                : (params.get('lat') ? `${params.get('lat')}, ${params.get('lng')}` : 'Location unknown'),
+            timestamp: params.get('ts') || new Date().toISOString(),
+            type: 'push'
+        };
+
+        setTimeout(() => {
+            this.triggerIncomingAlarm(alertData);
+        }, 800);
+
+        window.history.replaceState({}, document.title, '/');
     },
 
     triggerIncomingAlarm: function(alertData) {
@@ -218,7 +185,6 @@ const App = {
         if (window.Emergency && Emergency.handleIncomingAlert) {
             Emergency.handleIncomingAlert(alertData);
         } else {
-            console.error('[App] Emergency not loaded, retrying...');
             setTimeout(() => {
                 if (window.Emergency && Emergency.handleIncomingAlert) {
                     Emergency.handleIncomingAlert(alertData);
@@ -230,18 +196,12 @@ const App = {
     updateStatus: function() {
         const statusText = document.getElementById('statusText');
         const statusDot = document.getElementById('statusDot');
-
-        if (statusText) {
-            statusText.textContent = Emergency.isAlerting ? 'Alerting...' : 'Ready';
-        }
-
-        if (statusDot) {
-            statusDot.className = Emergency.isAlerting ? 'status-dot alerting' : 'status-dot ready';
-        }
+        if (statusText) statusText.textContent = Emergency.isAlerting ? 'Alerting...' : 'Ready';
+        if (statusDot) statusDot.className = Emergency.isAlerting ? 'status-dot alerting' : 'status-dot ready';
     },
 
     getVersion: function() {
-        return '4.2-pwa';
+        return '4.3-pwa';
     }
 };
 
