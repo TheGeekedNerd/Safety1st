@@ -7,12 +7,18 @@ const GPS = {
     formattedAddress: null,
     addressPromise: null,
     lastGeocodeCoords: null,
+    geocodeAttempts: 0,
     isAvailable: function() {
         return !!this.currentLocation;
     },
 
+    // Alias for index.html onclick="GPS.getLocation()"
+    getLocation: function() {
+        console.log('[GPS] getLocation() called (alias for getFormattedLocationAsync)');
+        return this.getFormattedLocationAsync();
+    },
+
     getFormattedLocation: function() {
-        // Return address if we have it, otherwise coords
         if (this.formattedAddress) {
             return this.formattedAddress;
         }
@@ -22,18 +28,22 @@ const GPS = {
         return 'No GPS';
     },
 
-    // Async version - waits for geocode to finish
     getFormattedLocationAsync: async function() {
-        // If we already have an address, return it
+        console.log('[GPS] getFormattedLocationAsync called');
+        console.log('[GPS] formattedAddress:', this.formattedAddress);
+        console.log('[GPS] addressPromise:', this.addressPromise ? 'exists' : 'null');
+
         if (this.formattedAddress) {
+            console.log('[GPS] Returning cached address:', this.formattedAddress);
             return this.formattedAddress;
         }
-        // If a geocode is in progress, wait for it
         if (this.addressPromise) {
+            console.log('[GPS] Waiting for in-flight geocode...');
             await this.addressPromise;
+            console.log('[GPS] Geocode finished, address:', this.formattedAddress);
             return this.formattedAddress || this.getFormattedLocation();
         }
-        // Otherwise return whatever we have now
+        console.log('[GPS] No address or promise, returning:', this.getFormattedLocation());
         return this.getFormattedLocation();
     },
 
@@ -46,12 +56,12 @@ const GPS = {
     },
 
     init: function() {
+        console.log('[GPS] GPS.init() called');
         if (!('geolocation' in navigator)) {
             console.log('[GPS] Geolocation not supported');
             return;
         }
 
-        // Get initial position
         navigator.geolocation.getCurrentPosition(
             (position) => {
                 this.currentLocation = {
@@ -60,20 +70,19 @@ const GPS = {
                     accuracy: position.coords.accuracy,
                     timestamp: position.timestamp
                 };
-                console.log('[GPS] Initial location:', this.currentLocation.lat.toFixed(4), this.currentLocation.lng.toFixed(4));
+                console.log('[GPS] Initial location:', this.currentLocation.lat.toFixed(6), this.currentLocation.lng.toFixed(6));
                 this.reverseGeocode(this.currentLocation.lat, this.currentLocation.lng);
             },
             (err) => {
-                console.error('[GPS] Initial position error:', err.message);
+                console.error('[GPS] Initial position error:', err.code, err.message);
             },
             {
                 enableHighAccuracy: true,
-                timeout: 10000,
+                timeout: 15000,
                 maximumAge: 0
             }
         );
 
-        // Watch position continuously
         navigator.geolocation.watchPosition(
             (position) => {
                 this.currentLocation = {
@@ -82,28 +91,29 @@ const GPS = {
                     accuracy: position.coords.accuracy,
                     timestamp: position.timestamp
                 };
-                console.log('[GPS] Location updated:', this.currentLocation.lat.toFixed(4), this.currentLocation.lng.toFixed(4));
+                console.log('[GPS] Watch location:', this.currentLocation.lat.toFixed(6), this.currentLocation.lng.toFixed(6));
                 this.reverseGeocode(this.currentLocation.lat, this.currentLocation.lng);
             },
             (err) => {
-                console.error('[GPS] Watch error:', err.message);
+                console.error('[GPS] Watch error:', err.code, err.message);
             },
             {
                 enableHighAccuracy: true,
-                timeout: 10000,
+                timeout: 15000,
                 maximumAge: 30000
             }
         );
     },
 
     reverseGeocode: async function(lat, lng) {
-        // Don't re-geocode if we already did for these exact coords
         const coordKey = `${lat.toFixed(4)},${lng.toFixed(4)}`;
         if (this.lastGeocodeCoords === coordKey) {
+            console.log('[GPS] Already geocoded these coords, skipping');
             return;
         }
         this.lastGeocodeCoords = coordKey;
 
+        console.log('[GPS] Starting geocode for:', lat, lng);
         const promise = this._doGeocode(lat, lng);
         this.addressPromise = promise;
         await promise;
@@ -111,40 +121,84 @@ const GPS = {
     },
 
     _doGeocode: async function(lat, lng) {
+        this.geocodeAttempts++;
+        console.log('[GPS] Geocode attempt #' + this.geocodeAttempts);
+
+        // Try Nominatim first
         try {
             const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
+            console.log('[GPS] Fetching:', url);
 
-            console.log('[GPS] Geocoding...');
             const response = await fetch(url, {
                 headers: {
                     'User-Agent': 'SoundAlert-Emergency-App/1.0'
                 }
             });
 
+            console.log('[GPS] Nominatim response status:', response.status);
+
             if (!response.ok) {
-                throw new Error('Geocoding failed: ' + response.status);
+                throw new Error('Nominatim failed: ' + response.status);
             }
 
             const data = await response.json();
-            console.log('[GPS] Geocode result:', data.display_name?.substring(0, 60) + '...');
+            console.log('[GPS] Nominatim raw:', JSON.stringify(data).substring(0, 200));
+
+            if (data.error) {
+                throw new Error('Nominatim error: ' + data.error);
+            }
 
             const address = this.formatAddress(data);
             this.formattedAddress = address;
-            console.log('[GPS] Address:', address);
+            console.log('[GPS] SUCCESS - Address:', address);
 
-            // Update UI if currently alerting
             const alertDetail = document.getElementById('alertDetail');
-            if (alertDetail && Emergency.isAlerting) {
+            if (alertDetail && window.Emergency && Emergency.isAlerting) {
+                console.log('[GPS] Updating alertDetail UI');
                 alertDetail.innerHTML = `
                     ${address}<br>
                     <small style="color:#888;">${new Date().toLocaleString()}</small>
                 `;
             }
+            return;
 
         } catch (err) {
-            console.error('[GPS] Geocoding failed:', err);
-            this.formattedAddress = null;
+            console.error('[GPS] Nominatim failed:', err.message);
         }
+
+        // Fallback: BigDataCloud
+        try {
+            console.log('[GPS] Trying BigDataCloud fallback...');
+            const url = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`;
+            const response = await fetch(url);
+            console.log('[GPS] BigDataCloud response status:', response.status);
+
+            if (!response.ok) {
+                throw new Error('BigDataCloud failed: ' + response.status);
+            }
+
+            const data = await response.json();
+            console.log('[GPS] BigDataCloud raw:', JSON.stringify(data).substring(0, 200));
+
+            const address = this.formatBigDataCloud(data);
+            this.formattedAddress = address;
+            console.log('[GPS] SUCCESS (fallback) - Address:', address);
+
+            const alertDetail = document.getElementById('alertDetail');
+            if (alertDetail && window.Emergency && Emergency.isAlerting) {
+                alertDetail.innerHTML = `
+                    ${address}<br>
+                    <small style="color:#888;">${new Date().toLocaleString()}</small>
+                `;
+            }
+            return;
+
+        } catch (err2) {
+            console.error('[GPS] BigDataCloud also failed:', err2.message);
+        }
+
+        console.log('[GPS] All geocoding failed, keeping coords');
+        this.formattedAddress = null;
     },
 
     formatAddress: function(data) {
@@ -153,8 +207,8 @@ const GPS = {
         }
 
         const addr = data.address;
+        console.log('[GPS] Formatting address from:', JSON.stringify(addr));
 
-        // Priority: building name > POI > house number + road > road + suburb
         const building = addr.building || addr['addr:housename'] || addr.historic || addr.tourism || addr.amenity;
         const houseNumber = addr.house_number || addr['addr:housenumber'];
         const road = addr.road || addr.pedestrian || addr.footway || addr.street || addr.highway;
@@ -186,11 +240,25 @@ const GPS = {
         }
 
         return parts.join(', ');
+    },
+
+    formatBigDataCloud: function(data) {
+        const parts = [];
+        if (data.locality) parts.push(data.locality);
+        if (data.city) parts.push(data.city);
+        if (data.principalSubdivision) parts.push(data.principalSubdivision);
+        if (data.countryName) parts.push(data.countryName);
+
+        if (parts.length === 0) {
+            return data.localityInfo?.informative?.[0]?.description || 'Unknown location';
+        }
+        return parts.join(', ');
     }
 };
 
 window.GPS = GPS;
 
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('[GPS] DOM ready, initializing GPS');
     GPS.init();
 });
