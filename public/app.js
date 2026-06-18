@@ -11,6 +11,9 @@ const App = {
         this.initialized = true;
 
         console.log('[App] SoundAlert initializing...');
+        console.log('[App] Version:', this.getVersion());
+        console.log('[App] Protocol:', window.location.protocol);
+        console.log('[App] URL:', window.location.href);
 
         this.registerSW();
         this.requestNotificationPermission();
@@ -22,79 +25,117 @@ const App = {
 
     registerSW: async function() {
         if (!('serviceWorker' in navigator)) {
-            console.log('[App] Service Worker not supported');
+            console.error('[App] FATAL: Service Worker not supported');
             return;
         }
 
         try {
-            // FIX: Only unregister outdated SWs, not on every load.
-            // Check if existing registration has a different script URL or is dead.
+            console.log('[App] Starting SW registration...');
+
+            // Get existing registrations
             const oldRegistrations = await navigator.serviceWorker.getRegistrations();
-            let hadOld = false;
+            console.log('[App] Found', oldRegistrations.length, 'existing SW registrations');
+
+            // Check if we need to update (new version)
+            let needsUpdate = false;
             for (let reg of oldRegistrations) {
-                // Only unregister if the SW is not our current sw.js
-                const expectedScope = new URL('sw.js', window.location.href).href.replace('sw.js', '');
-                if (!reg.scope.includes(expectedScope) || !reg.active) {
-                    console.log('[App] Unregistering stale SW:', reg.scope);
+                console.log('[App] Existing SW:', reg.scope, 'active:', !!reg.active);
+
+                // If there's no active SW, or scope is wrong, unregister
+                if (!reg.active) {
+                    console.log('[App] Unregistering inactive SW');
                     await reg.unregister();
-                    hadOld = true;
+                    needsUpdate = true;
                 }
             }
 
-            const registration = await navigator.serviceWorker.register('sw.js');
-            console.log('[App] SW registered, scope:', registration.scope);
-            registration.update();
+            // Register with explicit scope
+            console.log('[App] Registering SW...');
+            const registration = await navigator.serviceWorker.register('/sw.js', { 
+                scope: '/' 
+            });
 
+            console.log('[App] SW registered. Scope:', registration.scope);
+            console.log('[App] SW active:', !!registration.active);
+            console.log('[App] SW installing:', !!registration.installing);
+            console.log('[App] SW waiting:', !!registration.waiting);
+
+            // Wait for SW to be ready
             await navigator.serviceWorker.ready;
             console.log('[App] SW is ready');
 
+            // Subscribe to push
             await this.subscribeToPush(registration);
+
         } catch (err) {
             console.error('[App] SW registration failed:', err);
+            console.error('[App] Error details:', err.message);
         }
     },
 
     subscribeToPush: async function(registration) {
         try {
-            // Check if we already have a valid subscription
+            console.log('[App] Checking push subscription...');
+
+            // Check existing subscription
             const existingSub = await registration.pushManager.getSubscription();
+
             if (existingSub) {
-                console.log('[App] Existing push subscription found');
+                console.log('[App] Existing subscription found');
+                console.log('[App] Endpoint:', existingSub.endpoint.substring(0, 50) + '...');
                 this.pushSubscription = existingSub;
-                // Re-sync with server in case it was lost
                 await this.syncSubscriptionWithServer(existingSub);
                 return;
             }
 
-            const response = await fetch('/vapid-public-key');
-            if (!response.ok) throw new Error('Failed to fetch VAPID key: ' + response.status);
-            const { publicKey } = await response.json();
+            console.log('[App] No existing subscription, creating new one...');
 
+            // Fetch VAPID key
+            const response = await fetch('/vapid-public-key');
+            if (!response.ok) {
+                throw new Error('VAPID fetch failed: ' + response.status);
+            }
+
+            const { publicKey } = await response.json();
+            console.log('[App] VAPID key received');
+
+            // Subscribe
             const subscription = await registration.pushManager.subscribe({
                 userVisibleOnly: true,
                 applicationServerKey: this.urlBase64ToUint8Array(publicKey)
             });
 
+            console.log('[App] Push subscription created!');
+            console.log('[App] New endpoint:', subscription.endpoint.substring(0, 50) + '...');
+
             this.pushSubscription = subscription;
             await this.syncSubscriptionWithServer(subscription);
 
         } catch (err) {
-            console.error('[App] Push subscription failed:', err);
+            console.error('[App] Push subscription failed:', err.message);
+            console.error('[App] Full error:', err);
         }
     },
 
     syncSubscriptionWithServer: async function(subscription) {
         try {
+            console.log('[App] Syncing subscription with server...');
+
             const subResponse = await fetch('/subscribe', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(subscription)
             });
 
-            if (!subResponse.ok) throw new Error('Server rejected subscription: ' + subResponse.status);
-            console.log('[App] Push subscription saved');
+            if (!subResponse.ok) {
+                throw new Error('Server rejected: ' + subResponse.status);
+            }
+
+            const result = await subResponse.json();
+            console.log('[App] Subscription synced. Server total:', result.total);
+
         } catch (err) {
-            console.error('[App] Failed to sync subscription:', err);
+            console.error('[App] Sync failed:', err.message);
         }
     },
 
@@ -113,102 +154,35 @@ const App = {
 
     requestNotificationPermission: async function() {
         if (!('Notification' in window)) {
-            console.log('[App] Notifications not supported on this device');
-            this.showNotificationWarning('Notifications not supported');
+            console.log('[App] Notifications not supported');
             return;
         }
 
-        console.log('[App] Notification permission state:', Notification.permission);
+        console.log('[App] Notification permission:', Notification.permission);
 
         if (Notification.permission === 'default') {
             const result = await Notification.requestPermission();
-            console.log('[App] Notification permission result:', result);
-            if (result !== 'granted') {
-                this.showNotificationWarning('Permission denied — alerts will not show when app is closed');
-            }
+            console.log('[App] Permission result:', result);
         } else if (Notification.permission === 'denied') {
-            console.warn('[App] Notification permission was previously denied');
-            this.showNotificationWarning('Notifications blocked — enable in browser settings');
-        }
-    },
-
-    showNotificationWarning: function(message) {
-        // Show a subtle warning in the UI
-        const statusText = document.getElementById('statusText');
-        if (statusText && !document.getElementById('notifWarning')) {
-            const warning = document.createElement('div');
-            warning.id = 'notifWarning';
-            warning.style.cssText = 'text-align:center;font-size:11px;color:#F59E0B;margin-top:4px;';
-            warning.textContent = '⚠️ ' + message;
-            statusText.parentNode.appendChild(warning);
+            console.warn('[App] Notifications blocked by user');
         }
     },
 
     setupInstallPrompt: function() {
         let deferredPrompt;
-        let installPromptFired = false;
-
-        console.log('[App] Setting up install prompt listener...');
-
-        // Check if already installed as PWA
-        if (window.matchMedia('(display-mode: standalone)').matches || 
-            window.navigator.standalone === true) {
-            console.log('[App] App is already running in standalone mode (installed)');
-            return;
-        }
 
         window.addEventListener('beforeinstallprompt', (e) => {
-            console.log('[App] beforeinstallprompt event fired!');
-            installPromptFired = true;
+            console.log('[App] Install prompt available');
             e.preventDefault();
             deferredPrompt = e;
             this.showInstallBanner(deferredPrompt);
         });
 
         window.addEventListener('appinstalled', () => {
-            console.log('[App] App was installed');
+            console.log('[App] App installed');
             deferredPrompt = null;
             this.hideInstallBanner();
         });
-
-        // Diagnostic: check why prompt might not fire
-        setTimeout(() => {
-            if (!installPromptFired) {
-                console.log('[App] Install prompt did not fire. Possible reasons:');
-                console.log('  - App already installed');
-                console.log('  - Not meeting PWA criteria (HTTPS, manifest icons, SW)');
-                console.log('  - User previously dismissed install');
-                console.log('  - Not enough engagement time (need 30s interaction)');
-                this.checkPWARequirements();
-            }
-        }, 5000);
-    },
-
-    checkPWARequirements: function() {
-        console.log('[App] PWA Requirements Check:');
-        console.log('  - HTTPS:', window.location.protocol === 'https:');
-        console.log('  - Service Worker:', 'serviceWorker' in navigator);
-        console.log('  - Push Manager:', 'PushManager' in window);
-        console.log('  - Manifest:', document.querySelector('link[rel="manifest"]') !== null);
-        console.log('  - Display mode:', window.matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser');
-
-        // Check manifest validity
-        fetch('/webmanifest.json')
-            .then(r => r.json())
-            .then(manifest => {
-                console.log('  - Manifest parsed:', !!manifest);
-                console.log('  - Manifest name:', manifest.name || manifest.short_name);
-                console.log('  - Manifest display:', manifest.display);
-                console.log('  - Manifest icons count:', manifest.icons?.length || 0);
-                const has192 = manifest.icons?.some(i => i.sizes?.includes('192'));
-                const has512 = manifest.icons?.some(i => i.sizes?.includes('512'));
-                console.log('  - Has 192x192 icon:', has192);
-                console.log('  - Has 512x512 icon:', has512);
-                if (!has192 || !has512) {
-                    console.warn('[App] MISSING REQUIRED ICONS! Install prompt will not fire.');
-                }
-            })
-            .catch(err => console.error('[App] Manifest fetch failed:', err));
     },
 
     showInstallBanner: function(deferredPrompt) {
@@ -227,7 +201,7 @@ const App = {
 
             document.getElementById('installBtn').addEventListener('click', () => {
                 deferredPrompt.prompt();
-                deferredPrompt.userChoice.then((choice) => {
+                deferredPrompt.userChoice.then(() => {
                     this.hideInstallBanner();
                 });
             });
@@ -303,11 +277,9 @@ const App = {
     },
 
     testPushNotification: async function() {
-        // Manual test: send a push to yourself
-        console.log('[App] Testing push notification...');
+        console.log('[App] Testing push...');
         if (!this.pushSubscription) {
-            console.error('[App] No push subscription available');
-            alert('No push subscription. Try reloading the page.');
+            alert('No push subscription. Check console for errors.');
             return;
         }
 
@@ -324,21 +296,29 @@ const App = {
                     timestamp: new Date().toISOString(),
                     timeFormatted: new Date().toLocaleString(),
                     location: 'Test notification',
-                    message: 'TEST NOTIFICATION',
-                    description: 'This is a test'
+                    message: 'TEST NOTIFICATION'
                 })
             });
             const result = await response.json();
-            console.log('[App] Test push result:', result);
+            console.log('[App] Test result:', result);
             alert(`Push sent to ${result.sent} devices`);
         } catch (err) {
-            console.error('[App] Test push failed:', err);
-            alert('Test push failed: ' + err.message);
+            console.error('[App] Test failed:', err);
+            alert('Test failed: ' + err.message);
         }
     },
 
+    forceReRegisterSW: async function() {
+        console.log('[App] Force re-registering...');
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (let reg of regs) {
+            await reg.unregister();
+        }
+        window.location.reload();
+    },
+
     getVersion: function() {
-        return '4.5-pwa-push-debug';
+        return '4.6-clean';
     }
 };
 

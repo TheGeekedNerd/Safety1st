@@ -29,7 +29,6 @@ const Emergency = {
 
     currentAlertType: null,
 
-    // ─── Listen for tapped push notifications from the service worker ──────────
     initServiceWorkerListener: function() {
         if (!('serviceWorker' in navigator)) return;
 
@@ -77,18 +76,17 @@ const Emergency = {
         const typeConfig = this.ALERT_TYPES[alertType] || this.ALERT_TYPES.GBV;
         this.currentAlertType = alertType;
 
-        // Disable both alert type buttons while alerting
         document.querySelectorAll('.alert-type-btn').forEach(btn => {
-            btn.disabled    = true;
+            btn.disabled = true;
             btn.style.opacity = '0.4';
         });
 
-        const alertMode  = document.getElementById('alertMode');
+        const alertMode = document.getElementById('alertMode');
         const statusText = document.getElementById('statusText');
-        const statusDot  = document.getElementById('statusDot');
-        const btnZone    = document.querySelector('.alert-type-zone');
+        const statusDot = document.getElementById('statusDot');
+        const btnZone = document.querySelector('.alert-type-zone');
 
-        if (statusDot)  statusDot.className   = 'status-dot alerting';
+        if (statusDot) statusDot.className = 'status-dot alerting';
         if (statusText) statusText.textContent = typeConfig.shortLabel + ' Alerting...';
 
         if (alertMode) {
@@ -98,12 +96,11 @@ const Emergency = {
 
         if (btnZone) btnZone.classList.add('alerting');
 
-        // ── Get location ─────────────────────────────────────────────────────
         console.log('[Emergency] Getting location...');
         let locationText = 'No GPS';
         try {
             const locationPromise = GPS.getFormattedLocationAsync();
-            const timeoutPromise  = new Promise(resolve =>
+            const timeoutPromise = new Promise(resolve =>
                 setTimeout(() => resolve(GPS.getFormattedLocation()), 3000)
             );
             locationText = await Promise.race([locationPromise, timeoutPromise]);
@@ -112,9 +109,9 @@ const Emergency = {
         }
         console.log('[Emergency] Location:', locationText);
 
-        const alertTime  = new Date();
+        const alertTime = new Date();
         const timeString = alertTime.toLocaleString();
-        const timeISO    = alertTime.toISOString();
+        const timeISO = alertTime.toISOString();
 
         const alertDetail = document.getElementById('alertDetail');
         if (alertDetail) {
@@ -126,44 +123,39 @@ const Emergency = {
         }
 
         const alertData = {
-            id:             Date.now().toString(36),
-            alertType:      alertType,
+            id: Date.now().toString(36),
+            alertType: alertType,
             alertTypeLabel: typeConfig.label,
             alertTypeShort: typeConfig.shortLabel,
             alertTypeColor: typeConfig.color,
-            timestamp:      timeISO,
-            timeFormatted:  timeString,
-            location:       locationText,
-            lat:  GPS.currentLocation ? GPS.currentLocation.lat : null,
-            lng:  GPS.currentLocation ? GPS.currentLocation.lng : null,
-            message:     typeConfig.message,
+            timestamp: timeISO,
+            timeFormatted: timeString,
+            location: locationText,
+            lat: GPS.currentLocation ? GPS.currentLocation.lat : null,
+            lng: GPS.currentLocation ? GPS.currentLocation.lng : null,
+            message: typeConfig.message,
             description: typeConfig.description
         };
 
         console.log('[Emergency] Dispatching alert. Type:', alertType, '| Location:', locationText);
 
-        // ── CHANNEL 1: Sonic (ultrasonic) ────────────────────────────────────
         if (window.SonicAlert) SonicAlert.transmit(alertData);
 
-        // ── CHANNEL 2: P2P (WebRTC data channels) ────────────────────────────
         if (window.P2P) {
             const peerCount = P2P.broadcastAlert(alertData);
             console.log(`[Emergency] P2P sent to ${peerCount} peers`);
         }
 
-        // ── CHANNEL 3: Server push (Web Push API via service worker) ─────────
         this.sendPushNotification(alertData);
 
-        // ── Backup: Web Share ─────────────────────────────────────────────────
         if (navigator.share) {
             navigator.share({
                 title: typeConfig.message,
-                text:  `${typeConfig.message}\nType: ${typeConfig.label}\nLocation: ${locationText}\nTime: ${timeString}`,
-                url:   window.location.href
+                text: `${typeConfig.message}\nType: ${typeConfig.label}\nLocation: ${locationText}\nTime: ${timeString}`,
+                url: window.location.href
             }).catch(() => {});
         }
 
-        // ── Backup: Clipboard ─────────────────────────────────────────────────
         if (navigator.clipboard) {
             navigator.clipboard.writeText(
                 `${typeConfig.message}\nType: ${typeConfig.label}\nLocation: ${locationText}\nTime: ${timeString}`
@@ -178,7 +170,6 @@ const Emergency = {
             navigator.vibrate([200, 100, 200, 100, 400]);
         }
 
-        // Auto-cancel after configured delay
         if (this.alertCountdown) clearTimeout(this.alertCountdown);
         this.alertCountdown = setTimeout(() => {
             this.cancel();
@@ -188,9 +179,9 @@ const Emergency = {
     sendPushNotification: async function(alertData) {
         try {
             const response = await fetch('/broadcast', {
-                method:  'POST',
+                method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify(alertData)
+                body: JSON.stringify(alertData)
             });
 
             if (!response.ok) {
@@ -207,21 +198,20 @@ const Emergency = {
     cancel: function() {
         if (!this.isAlerting) return;
 
-        this.isAlerting       = false;
+        this.isAlerting = false;
         this.currentAlertType = null;
 
-        // Re-enable alert type buttons
         document.querySelectorAll('.alert-type-btn').forEach(btn => {
-            btn.disabled      = false;
+            btn.disabled = false;
             btn.style.opacity = '1';
         });
 
-        const alertMode  = document.getElementById('alertMode');
+        const alertMode = document.getElementById('alertMode');
         const statusText = document.getElementById('statusText');
-        const statusDot  = document.getElementById('statusDot');
-        const btnZone    = document.querySelector('.alert-type-zone');
+        const statusDot = document.getElementById('statusDot');
+        const btnZone = document.querySelector('.alert-type-zone');
 
-        if (statusDot)  statusDot.className   = 'status-dot ready';
+        if (statusDot) statusDot.className = 'status-dot ready';
         if (statusText) statusText.textContent = 'Ready';
 
         if (alertMode) {
@@ -241,33 +231,22 @@ const Emergency = {
         if (!alert) return;
         console.log('[Emergency] INCOMING ALERT:', alert);
 
-        // DEBUG: Flash screen border to visually confirm alert was received
-        const debugFlash = document.createElement('div');
-        debugFlash.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;border:8px solid #E24B4A;z-index:99999;pointer-events:none;opacity:0.8;transition:opacity 0.3s;';
-        document.body.appendChild(debugFlash);
-        setTimeout(() => { debugFlash.style.opacity = '0'; }, 200);
-        setTimeout(() => { debugFlash.remove(); }, 500);
-
-        // DEBUG: Show toast notification
-        this.showDebugToast('🚨 ALERT RECEIVED: ' + (alert.alertTypeLabel || 'EMERGENCY'));
-
         const typeConfig = this.ALERT_TYPES[alert.alertType] || {
-            label:      alert.alertTypeLabel || 'EMERGENCY',
-            color:      alert.alertTypeColor || '#E24B4A',
+            label: alert.alertTypeLabel || 'EMERGENCY',
+            color: alert.alertTypeColor || '#E24B4A',
             shortLabel: alert.alertTypeShort || 'ALERT',
-            message:    alert.message        || 'EMERGENCY ALERT!'
+            message: alert.message || 'EMERGENCY ALERT!'
         };
 
-        const overlay    = document.getElementById('incomingAlert');
+        const overlay = document.getElementById('incomingAlert');
         const locationEl = document.getElementById('incomingLocation');
-        const timeEl     = document.getElementById('incomingTime');
-        const mapLink    = document.getElementById('incomingMap');
+        const timeEl = document.getElementById('incomingTime');
+        const mapLink = document.getElementById('incomingMap');
 
         if (overlay) {
-            // Insert or update type badge
             let typeBadge = document.getElementById('incomingTypeBadge');
             if (!typeBadge) {
-                typeBadge    = document.createElement('div');
+                typeBadge = document.createElement('div');
                 typeBadge.id = 'incomingTypeBadge';
                 if (locationEl && locationEl.parentNode) {
                     locationEl.parentNode.insertBefore(typeBadge, locationEl);
@@ -280,11 +259,11 @@ const Emergency = {
             `;
 
             if (locationEl) locationEl.textContent = alert.location || 'Location unknown';
-            if (timeEl)     timeEl.textContent     = alert.timeFormatted || new Date(alert.timestamp).toLocaleString();
+            if (timeEl) timeEl.textContent = alert.timeFormatted || new Date(alert.timestamp).toLocaleString();
 
             if (mapLink) {
                 if (alert.lat && alert.lng) {
-                    mapLink.href         = `https://www.google.com/maps?q=${alert.lat},${alert.lng}`;
+                    mapLink.href = `https://www.google.com/maps?q=${alert.lat},${alert.lng}`;
                     mapLink.style.display = 'inline-block';
                 } else {
                     mapLink.style.display = 'none';
@@ -301,10 +280,9 @@ const Emergency = {
             navigator.vibrate([200, 100, 200, 100, 400]);
         }
 
-        // FIX: Use service worker for reliable notifications when available
+        // Show notification
         if ('Notification' in window && Notification.permission === 'granted') {
             if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-                // Use service worker notification for reliability
                 navigator.serviceWorker.controller.postMessage({
                     type: 'SHOW_NOTIFICATION',
                     title: typeConfig.message,
@@ -312,7 +290,6 @@ const Emergency = {
                     data: alert
                 });
             } else {
-                // Fallback to page notification
                 try {
                     new Notification(typeConfig.message, {
                         body: `[${typeConfig.shortLabel}] Someone needs help! ${alert.location || ''}`,
@@ -329,14 +306,6 @@ const Emergency = {
         }
     },
 
-    showDebugToast: function(message) {
-        const toast = document.createElement('div');
-        toast.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#E24B4A;color:white;padding:12px 24px;border-radius:8px;font-weight:600;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
-        toast.textContent = message;
-        document.body.appendChild(toast);
-        setTimeout(() => { toast.remove(); }, 4000);
-    },
-
     dismissIncoming: function() {
         const overlay = document.getElementById('incomingAlert');
         if (overlay) {
@@ -349,9 +318,9 @@ const Emergency = {
         if (!CONFIG.NOTIFICATIONS.SOUND) return;
 
         try {
-            const audio    = new Audio('emergency_alarm.mp3');
-            audio.volume   = 1.0;
-            let playCount  = 0;
+            const audio = new Audio('emergency_alarm.mp3');
+            audio.volume = 1.0;
+            let playCount = 0;
             const maxPlays = 3;
 
             audio.onended = () => {
@@ -375,9 +344,9 @@ const Emergency = {
             }
             if (this.audioContext.state === 'suspended') this.audioContext.resume();
 
-            const ctx          = this.audioContext;
-            const now          = ctx.currentTime;
-            const masterGain   = ctx.createGain();
+            const ctx = this.audioContext;
+            const now = ctx.currentTime;
+            const masterGain = ctx.createGain();
             masterGain.gain.setValueAtTime(0, now);
             masterGain.gain.linearRampToValueAtTime(1.0, now + 0.05);
             masterGain.connect(ctx.destination);
@@ -390,9 +359,9 @@ const Emergency = {
             compressor.release.setValueAtTime(0.1, now);
             compressor.connect(masterGain);
 
-            const osc1  = ctx.createOscillator();
+            const osc1 = ctx.createOscillator();
             const gain1 = ctx.createGain();
-            osc1.type   = 'sawtooth';
+            osc1.type = 'sawtooth';
             osc1.connect(gain1);
             gain1.connect(compressor);
 
@@ -400,11 +369,11 @@ const Emergency = {
                 const t = now + (i * 0.6);
                 osc1.frequency.setValueAtTime(800, t);
                 osc1.frequency.linearRampToValueAtTime(1200, t + 0.3);
-                osc1.frequency.linearRampToValueAtTime(800,  t + 0.6);
+                osc1.frequency.linearRampToValueAtTime(800, t + 0.6);
             }
 
-            gain1.gain.setValueAtTime(0.5,  now);
-            gain1.gain.setValueAtTime(0.5,  now + 3.0);
+            gain1.gain.setValueAtTime(0.5, now);
+            gain1.gain.setValueAtTime(0.5, now + 3.0);
             gain1.gain.linearRampToValueAtTime(0, now + 3.5);
 
             osc1.start(now);
@@ -429,7 +398,6 @@ const Emergency = {
 
 window.Emergency = Emergency;
 
-// ─── Global keyboard shortcuts ────────────────────────────────────────────────
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         Emergency.cancel();
@@ -437,7 +405,6 @@ document.addEventListener('keydown', function(e) {
     }
 });
 
-// ─── Register SW message listener as soon as possible ────────────────────────
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => Emergency.initServiceWorkerListener());
 } else {

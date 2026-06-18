@@ -242,6 +242,11 @@ const server = http.createServer((req, res) => {
   let filePath = req.url === '/' ? '/index.html' : req.url.split('?')[0];
   filePath = path.join(__dirname, 'public', filePath);
 
+  // Debug: log icon file requests
+  if (filePath.includes('icon-') || filePath.includes('badge-')) {
+    console.log('[Server] Serving icon:', req.url, '→', filePath);
+  }
+
   const ext         = path.extname(filePath).toLowerCase();
   const contentType = mimeTypes[ext] || 'application/octet-stream';
 
