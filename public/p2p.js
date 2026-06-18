@@ -11,6 +11,9 @@ const P2P = {
     pendingCandidates: new Map(), // peerId → RTCIceCandidate[] (queued before remote desc is set)
     debug: true,
 
+    // FIX: Queue alerts received before Emergency module is ready
+    _pendingAlerts: [],
+
     log: function(...args) {
         if (this.debug) console.log('[P2P]', ...args);
     },
@@ -25,6 +28,25 @@ const P2P = {
         this.showMyId();
         this.log('Init with ID:', this.localId);
         this.connectSignaling();
+
+        // FIX: Process any alerts that arrived before Emergency was ready
+        this._flushPendingAlerts();
+    },
+
+    // FIX: Flush queued alerts once Emergency is available
+    _flushPendingAlerts: function() {
+        if (this._pendingAlerts.length === 0) return;
+        if (!window.Emergency || !Emergency.handleIncomingAlert) {
+            // Retry in 500ms
+            setTimeout(() => this._flushPendingAlerts(), 500);
+            return;
+        }
+
+        this.log(`Flushing ${this._pendingAlerts.length} pending alerts`);
+        while (this._pendingAlerts.length > 0) {
+            const alert = this._pendingAlerts.shift();
+            Emergency.handleIncomingAlert(alert);
+        }
     },
 
     showMyId: function() {
@@ -342,8 +364,15 @@ const P2P = {
         switch (data.type) {
             case 'emergency':
                 this.log('INCOMING ALERT from peer:', fromPeerId);
-                if (window.Emergency) {
+
+                // FIX: Queue alert if Emergency module isn't ready yet
+                if (window.Emergency && Emergency.handleIncomingAlert) {
                     Emergency.handleIncomingAlert(data.data);
+                } else {
+                    this._pendingAlerts.push(data.data);
+                    this.log('[P2P] Emergency not ready, queued alert. Queue size:', this._pendingAlerts.length);
+                    // Start flushing if not already
+                    this._flushPendingAlerts();
                 }
                 break;
             default:

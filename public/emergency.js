@@ -30,8 +30,6 @@ const Emergency = {
     currentAlertType: null,
 
     // ─── Listen for tapped push notifications from the service worker ──────────
-    // When the app is open and a notification is tapped, sw.js posts a message
-    // to this window. Without this listener, tapping the notification does nothing.
     initServiceWorkerListener: function() {
         if (!('serviceWorker' in navigator)) return;
 
@@ -261,7 +259,9 @@ const Emergency = {
             if (!typeBadge) {
                 typeBadge    = document.createElement('div');
                 typeBadge.id = 'incomingTypeBadge';
-                locationEl.parentNode.insertBefore(typeBadge, locationEl);
+                if (locationEl && locationEl.parentNode) {
+                    locationEl.parentNode.insertBefore(typeBadge, locationEl);
+                }
             }
             typeBadge.innerHTML = `
                 <div style="display:inline-block;padding:3px 10px;border-radius:5px;background:${typeConfig.color}22;color:${typeConfig.color};font-size:11px;font-weight:700;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">
@@ -291,15 +291,26 @@ const Emergency = {
             navigator.vibrate([200, 100, 200, 100, 400]);
         }
 
-        // In-app notification (fallback if push was already shown)
+        // FIX: Use service worker for reliable notifications when available
         if ('Notification' in window && Notification.permission === 'granted') {
-            try {
-                new Notification(typeConfig.message, {
+            if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+                // Use service worker notification for reliability
+                navigator.serviceWorker.controller.postMessage({
+                    type: 'SHOW_NOTIFICATION',
+                    title: typeConfig.message,
                     body: `[${typeConfig.shortLabel}] Someone needs help! ${alert.location || ''}`,
-                    requireInteraction: true
+                    data: alert
                 });
-            } catch (e) {
-                console.warn('[Emergency] Notification failed:', e);
+            } else {
+                // Fallback to page notification
+                try {
+                    new Notification(typeConfig.message, {
+                        body: `[${typeConfig.shortLabel}] Someone needs help! ${alert.location || ''}`,
+                        requireInteraction: true
+                    });
+                } catch (e) {
+                    console.warn('[Emergency] Notification failed:', e);
+                }
             }
         }
 
@@ -409,8 +420,6 @@ document.addEventListener('keydown', function(e) {
 });
 
 // ─── Register SW message listener as soon as possible ────────────────────────
-// (Also called in app.js DOMContentLoaded, but registering here ensures it's
-//  set up even if app.js initialises Emergency before DOMContentLoaded fires.)
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => Emergency.initServiceWorkerListener());
 } else {

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'soundalert-v8'; // bumped from v7 to force reinstall
+const CACHE_NAME = 'soundalert-v9'; // bumped from v8 to force reinstall with fixes
 const ASSETS = [
     '/',
     '/index.html',
@@ -164,9 +164,31 @@ self.addEventListener('notificationclick', function(event) {
     );
 });
 
-// ─── KEEP-ALIVE PING ──────────────────────────────────────────────────────────
+// ─── MESSAGE HANDLER (from pages) ─────────────────────────────────────────────
 self.addEventListener('message', function(event) {
+    // Keep-alive ping
     if (event.data && event.data.type === 'KEEP_ALIVE') {
         event.ports[0]?.postMessage({ status: 'alive' });
+        return;
+    }
+
+    // FIX: Handle in-app notification requests from emergency.js
+    if (event.data && event.data.type === 'SHOW_NOTIFICATION') {
+        const { title, body, data } = event.data;
+        self.registration.showNotification(title || 'Emergency Alert', {
+            body: body || 'Someone needs help!',
+            icon: '/icon-192.png',
+            badge: '/badge-72.png',
+            tag: 'emergency-' + (data?.id || Date.now()),
+            requireInteraction: true,
+            renotify: true,
+            vibrate: [200, 100, 200, 100, 400, 100, 200],
+            actions: [
+                { action: 'open',    title: 'OPEN ALARM' },
+                { action: 'dismiss', title: 'Dismiss'    }
+            ],
+            data: data || {}
+        });
+        return;
     }
 });
