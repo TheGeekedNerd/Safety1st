@@ -5,11 +5,14 @@
 const GPS = {
     currentLocation: null,
     formattedAddress: null,
+    addressPromise: null,
+    lastGeocodeCoords: null,
     isAvailable: function() {
         return !!this.currentLocation;
     },
 
     getFormattedLocation: function() {
+        // Return address if we have it, otherwise coords
         if (this.formattedAddress) {
             return this.formattedAddress;
         }
@@ -17,6 +20,21 @@ const GPS = {
             return `${this.currentLocation.lat.toFixed(4)}, ${this.currentLocation.lng.toFixed(4)}`;
         }
         return 'No GPS';
+    },
+
+    // Async version - waits for geocode to finish
+    getFormattedLocationAsync: async function() {
+        // If we already have an address, return it
+        if (this.formattedAddress) {
+            return this.formattedAddress;
+        }
+        // If a geocode is in progress, wait for it
+        if (this.addressPromise) {
+            await this.addressPromise;
+            return this.formattedAddress || this.getFormattedLocation();
+        }
+        // Otherwise return whatever we have now
+        return this.getFormattedLocation();
     },
 
     getAddress: function() {
@@ -33,6 +51,28 @@ const GPS = {
             return;
         }
 
+        // Get initial position
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                this.currentLocation = {
+                    lat: position.coords.latitude,
+                    lng: position.coords.longitude,
+                    accuracy: position.coords.accuracy,
+                    timestamp: position.timestamp
+                };
+                console.log('[GPS] Initial location:', this.currentLocation.lat.toFixed(4), this.currentLocation.lng.toFixed(4));
+                this.reverseGeocode(this.currentLocation.lat, this.currentLocation.lng);
+            },
+            (err) => {
+                console.error('[GPS] Initial position error:', err.message);
+            },
+            {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 0
+            }
+        );
+
         // Watch position continuously
         navigator.geolocation.watchPosition(
             (position) => {
@@ -42,13 +82,11 @@ const GPS = {
                     accuracy: position.coords.accuracy,
                     timestamp: position.timestamp
                 };
-                console.log('[GPS] Location updated:', this.currentLocation.lat, this.currentLocation.lng);
-
-                // Reverse geocode to get address/building name
+                console.log('[GPS] Location updated:', this.currentLocation.lat.toFixed(4), this.currentLocation.lng.toFixed(4));
                 this.reverseGeocode(this.currentLocation.lat, this.currentLocation.lng);
             },
             (err) => {
-                console.error('[GPS] Error:', err.message);
+                console.error('[GPS] Watch error:', err.message);
             },
             {
                 enableHighAccuracy: true,
@@ -59,12 +97,24 @@ const GPS = {
     },
 
     reverseGeocode: async function(lat, lng) {
+        // Don't re-geocode if we already did for these exact coords
+        const coordKey = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+        if (this.lastGeocodeCoords === coordKey) {
+            return;
+        }
+        this.lastGeocodeCoords = coordKey;
+
+        const promise = this._doGeocode(lat, lng);
+        this.addressPromise = promise;
+        await promise;
+        this.addressPromise = null;
+    },
+
+    _doGeocode: async function(lat, lng) {
         try {
-            // Use OpenStreetMap Nominatim (free, no API key needed)
-            // Format: lat, lng
             const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
 
-            console.log('[GPS] Reverse geocoding...');
+            console.log('[GPS] Geocoding...');
             const response = await fetch(url, {
                 headers: {
                     'User-Agent': 'SoundAlert-Emergency-App/1.0'
@@ -76,14 +126,13 @@ const GPS = {
             }
 
             const data = await response.json();
-            console.log('[GPS] Geocode result:', data);
+            console.log('[GPS] Geocode result:', data.display_name?.substring(0, 60) + '...');
 
-            // Extract the best name/address
             const address = this.formatAddress(data);
             this.formattedAddress = address;
-            console.log('[GPS] Formatted address:', address);
+            console.log('[GPS] Address:', address);
 
-            // Update UI if alert detail exists
+            // Update UI if currently alerting
             const alertDetail = document.getElementById('alertDetail');
             if (alertDetail && Emergency.isAlerting) {
                 alertDetail.innerHTML = `
@@ -93,8 +142,7 @@ const GPS = {
             }
 
         } catch (err) {
-            console.error('[GPS] Reverse geocoding failed:', err);
-            // Fallback to coordinates
+            console.error('[GPS] Geocoding failed:', err);
             this.formattedAddress = null;
         }
     },
@@ -112,34 +160,27 @@ const GPS = {
         const road = addr.road || addr.pedestrian || addr.footway || addr.street || addr.highway;
         const suburb = addr.suburb || addr.neighbourhood || addr.district || addr.borough;
         const city = addr.city || addr.town || addr.village || addr.hamlet || addr.municipality;
-        const state = addr.state || addr.province;
-        const country = addr.country;
 
         let parts = [];
 
-        // Building name is best
         if (building) {
             parts.push(building);
         }
 
-        // Street address
         if (houseNumber && road) {
             parts.push(`${houseNumber} ${road}`);
         } else if (road) {
             parts.push(road);
         }
 
-        // Area
         if (suburb && !parts.some(p => p.includes(suburb))) {
             parts.push(suburb);
         }
 
-        // City
         if (city && !parts.some(p => p.includes(city))) {
             parts.push(city);
         }
 
-        // If we have nothing useful, use display_name (full address)
         if (parts.length === 0) {
             return data.display_name || 'Unknown location';
         }
@@ -150,7 +191,6 @@ const GPS = {
 
 window.GPS = GPS;
 
-// Auto-init when DOM ready
 document.addEventListener('DOMContentLoaded', () => {
     GPS.init();
 });

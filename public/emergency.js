@@ -14,7 +14,7 @@ const Emergency = {
     }
   },
 
-  trigger: function() {
+  trigger: async function() {
     this.initAudio();
 
     const now = Date.now();
@@ -52,10 +52,10 @@ const Emergency = {
 
     if (btnZone) btnZone.classList.add('alerting');
 
-    // Use GPS.getFormattedLocation() which now returns building name/address
-    const locationText = GPS.isAvailable() ?
-      GPS.getFormattedLocation() :
-      'No GPS';
+    // WAIT for address to resolve before broadcasting
+    console.log('Waiting for address...');
+    const locationText = await GPS.getFormattedLocationAsync();
+    console.log('Using location:', locationText);
 
     const alertDetail = document.getElementById('alertDetail');
     if (alertDetail) {
@@ -102,18 +102,14 @@ const Emergency = {
     if (navigator.share) {
       navigator.share({
         title: 'Emergency Alert',
-        text: `EMERGENCY!
-${locationText}
-Time: ${new Date().toLocaleString()}`,
+        text: `EMERGENCY!\n${locationText}\nTime: ${new Date().toLocaleString()}`,
         url: window.location.href
       }).catch(() => {});
     }
 
     if (navigator.clipboard) {
       navigator.clipboard.writeText(
-        `EMERGENCY!
-${locationText}
-Time: ${new Date().toLocaleString()}`
+        `EMERGENCY!\n${locationText}\nTime: ${new Date().toLocaleString()}`
       ).catch(() => {});
     }
 
