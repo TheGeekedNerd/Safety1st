@@ -241,6 +241,16 @@ const Emergency = {
         if (!alert) return;
         console.log('[Emergency] INCOMING ALERT:', alert);
 
+        // DEBUG: Flash screen border to visually confirm alert was received
+        const debugFlash = document.createElement('div');
+        debugFlash.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;border:8px solid #E24B4A;z-index:99999;pointer-events:none;opacity:0.8;transition:opacity 0.3s;';
+        document.body.appendChild(debugFlash);
+        setTimeout(() => { debugFlash.style.opacity = '0'; }, 200);
+        setTimeout(() => { debugFlash.remove(); }, 500);
+
+        // DEBUG: Show toast notification
+        this.showDebugToast('🚨 ALERT RECEIVED: ' + (alert.alertTypeLabel || 'EMERGENCY'));
+
         const typeConfig = this.ALERT_TYPES[alert.alertType] || {
             label:      alert.alertTypeLabel || 'EMERGENCY',
             color:      alert.alertTypeColor || '#E24B4A',
@@ -317,6 +327,14 @@ const Emergency = {
         if (window.History) {
             History.addFromServer(alert);
         }
+    },
+
+    showDebugToast: function(message) {
+        const toast = document.createElement('div');
+        toast.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#E24B4A;color:white;padding:12px 24px;border-radius:8px;font-weight:600;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(() => { toast.remove(); }, 4000);
     },
 
     dismissIncoming: function() {

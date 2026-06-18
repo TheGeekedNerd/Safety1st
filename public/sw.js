@@ -1,4 +1,4 @@
-const CACHE_NAME = 'soundalert-v9'; // bumped from v8 to force reinstall with fixes
+const CACHE_NAME = 'soundalert-v10'; // bumped to force reinstall with icon fixes
 const ASSETS = [
     '/',
     '/index.html',
@@ -12,7 +12,10 @@ const ASSETS = [
     '/p2p.js',
     '/config.js',
     '/webmanifest.json',
-    '/emergency_alarm.mp3'
+    '/emergency_alarm.mp3',
+    '/icon-192.png',
+    '/icon-512.png',
+    '/badge-72.png'
 ];
 
 const API_ROUTES = ['/health', '/vapid-public-key', '/subscribe', '/broadcast'];

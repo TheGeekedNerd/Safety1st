@@ -63,6 +63,13 @@ const mimeTypes = {
   '.webmanifest': 'application/manifest+json'
 };
 
+// Ensure icon files are served from public directory
+const STATIC_FILES = [
+  'icon-192.png',
+  'icon-512.png', 
+  'badge-72.png'
+];
+
 // ─── HTTP SERVER ──────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -82,6 +89,26 @@ const server = http.createServer((req, res) => {
       status: 'ok',
       subscribers: subscriptions.size,
       peers: wss ? wss.clients.size : 0
+    }));
+    return;
+  }
+
+  // ── Debug: list all subscribers (no sensitive keys) ───────────────────────────
+  if (req.url === '/debug-subs') {
+    const subs = [...subscriptions].map((subStr, idx) => {
+      const sub = JSON.parse(subStr);
+      return {
+        id: idx + 1,
+        endpoint: sub.endpoint ? sub.endpoint.substring(0, 60) + '...' : 'invalid',
+        hasP256dh: !!sub.keys?.p256dh,
+        hasAuth: !!sub.keys?.auth,
+        endpointDomain: sub.endpoint ? new URL(sub.endpoint).hostname : 'unknown'
+      };
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      total: subscriptions.size,
+      subscribers: subs
     }));
     return;
   }
@@ -113,7 +140,13 @@ const server = http.createServer((req, res) => {
         subscriptions.add(subStr);
         if (isNew) saveSubs();
 
-        console.log(`[Push] ${isNew ? 'New' : 'Re-registered'} subscriber. Total: ${subscriptions.size}`);
+        // Log device details for debugging
+        const endpoint = subscription.endpoint || 'unknown';
+        const userAgent = req.headers['user-agent'] || 'unknown';
+        console.log(`[Push] ${isNew ? 'New' : 'Re-registered'} subscriber.`);
+        console.log(`[Push]   Endpoint: ${endpoint.substring(0, 60)}...`);
+        console.log(`[Push]   Device: ${userAgent.substring(0, 80)}`);
+        console.log(`[Push]   Total subscribers: ${subscriptions.size}`);
         res.writeHead(201, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, total: subscriptions.size }));
       } catch (e) {
@@ -133,6 +166,7 @@ const server = http.createServer((req, res) => {
       try {
         const alert = JSON.parse(body);
         console.log(`[Push] Broadcasting to ${subscriptions.size} subscribers. Type: ${alert.alertType}`);
+        console.log(`[Push] Alert data:`, JSON.stringify(alert).substring(0, 200));
 
         const typeLabel  = alert.alertTypeLabel || 'EMERGENCY';
         const notifTitle = `🚨 ${typeLabel.toUpperCase()} ALERT!`;
@@ -169,10 +203,15 @@ const server = http.createServer((req, res) => {
         });
 
         const deadSubs  = [];
-        const promises  = [...subscriptions].map(subStr => {
+        const sentTo    = [];
+        const promises  = [...subscriptions].map((subStr, idx) => {
           const sub = JSON.parse(subStr);
-          return webpush.sendNotification(sub, payload).catch(err => {
-            console.error('[Push] Send failed:', err.statusCode, err.message);
+          const endpointPreview = sub.endpoint ? sub.endpoint.substring(0, 40) : 'unknown';
+          return webpush.sendNotification(sub, payload).then(() => {
+            sentTo.push(endpointPreview);
+            console.log(`[Push] ✅ Sent to subscriber ${idx + 1}: ${endpointPreview}...`);
+          }).catch(err => {
+            console.error(`[Push] ❌ Send failed to ${endpointPreview}:`, err.statusCode, err.message);
             // 410 Gone / 404 Not Found = subscription is expired, remove it
             if (err.statusCode === 410 || err.statusCode === 404) {
               deadSubs.push(subStr);
