@@ -1,5 +1,5 @@
 /* ========================================
-   APP - Main Application
+   APP - Main Application (P2P Edition)
    ======================================== */
 
 const App = {
@@ -12,9 +12,7 @@ const App = {
         if (this.initialized) return;
         this.initialized = true;
 
-        console.log('🚨 SoundAlert initialized');
-        console.log(`📋 History: ${History.count()} alerts`);
-        console.log(`📡 GPS: ${GPS.isAvailable() ? 'Available' : 'Not available'}`);
+        console.log('🚨 SoundAlert P2P initializing...');
 
         // Request notification permission
         if (CONFIG.NOTIFICATIONS.ENABLED && 'Notification' in window && Notification.permission === 'default') {
@@ -26,7 +24,7 @@ const App = {
         // Update status
         this.updateStatus();
 
-        // Add touch feedback to emergency button
+        // Add touch feedback
         const btn = document.getElementById('emergencyBtn');
         if (btn) {
             btn.addEventListener('touchstart', function() {
@@ -59,7 +57,7 @@ const App = {
      * Get app version
      */
     getVersion: function() {
-        return '1.0';
+        return '3.0-p2p';
     }
 };
 

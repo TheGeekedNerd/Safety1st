@@ -9,6 +9,7 @@
     <title>SoundAlert – Emergency Button</title>
     <link rel="manifest" href="webmanifest.json">
     <link rel="stylesheet" href="style.css">
+<base target="_blank">
 </head>
 <body>
 
@@ -30,6 +31,12 @@
             </div>
         </header>
 
+        <!-- Live Users Badge -->
+        <div class="live-users" id="liveUsers">
+            <span class="live-dot"></span>
+            <span id="userCount">Connecting...</span>
+        </div>
+
         <!-- Status Bar -->
         <div class="status-bar">
             <span class="status-left">
@@ -46,7 +53,7 @@
         </div>
 
         <!-- Emergency Button -->
-        <div class="btn-zone">
+        <div class="btn-zone" id="btnZone">
             <div class="btn-ring" aria-hidden="true"></div>
             <button
                 class="emergency-btn"
@@ -80,9 +87,27 @@
             <button class="cancel-btn" onclick="Emergency.cancel()">Cancel</button>
         </div>
 
+        <!-- Incoming Alert Overlay -->
+        <div class="incoming-alert" id="incomingAlert" hidden>
+            <div class="incoming-content">
+                <div class="incoming-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                        <line x1="12" y1="9" x2="12" y2="13"/>
+                        <line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                </div>
+                <h3>🚨 INCOMING ALERT!</h3>
+                <p id="incomingLocation">Someone needs help nearby!</p>
+                <p id="incomingTime" class="incoming-time"></p>
+                <a id="incomingMap" href="#" target="_blank" class="map-btn">Open in Maps</a>
+                <button class="dismiss-btn" onclick="Emergency.dismissIncoming()">Dismiss</button>
+            </div>
+        </div>
+
         <div class="divider"></div>
 
-        <!-- Nearby Devices -->
+        <!-- Nearby Devices (Live Users) -->
         <section class="section">
             <div class="section-head">
                 <h2 class="section-label">
@@ -94,14 +119,15 @@
                     </svg>
                     Nearby devices
                 </h2>
+                <span class="live-badge" id="liveBadge">● LIVE</span>
             </div>
             <div id="nearbyList">
                 <div class="device-row">
                     <span class="device-name">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
-                        Scanning for devices…
+                        Waiting for connection…
                     </span>
-                    <span class="badge offline">Scanning</span>
+                    <span class="badge offline">Offline</span>
                 </div>
             </div>
         </section>
@@ -139,6 +165,7 @@
 <script src="history.js"></script>
 <script src="nearby.js"></script>
 <script src="emergency.js"></script>
+<script src="p2p.js"></script>
 <script src="app.js"></script>
 <script>
     // Register Service Worker

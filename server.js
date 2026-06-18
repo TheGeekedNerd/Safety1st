@@ -5,7 +5,6 @@ const WebSocket = require('ws');
 
 const PORT = process.env.PORT || 3000;
 
-// MIME types for static files
 const mimeTypes = {
   '.html': 'text/html',
   '.css': 'text/css',
@@ -17,8 +16,13 @@ const mimeTypes = {
   '.ico': 'image/x-icon'
 };
 
-// Create HTTP server to serve static files
 const server = http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', type: 'signaling-server' }));
+    return;
+  }
+
   let filePath = req.url === '/' ? '/index.html' : req.url;
   filePath = path.join(__dirname, 'public', filePath);
 
@@ -28,8 +32,16 @@ const server = http.createServer((req, res) => {
   fs.readFile(filePath, (err, content) => {
     if (err) {
       if (err.code === 'ENOENT') {
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
-        res.end('404 Not Found');
+        const indexPath = path.join(__dirname, 'public', 'index.html');
+        fs.readFile(indexPath, (err2, indexContent) => {
+          if (err2) {
+            res.writeHead(404, { 'Content-Type': 'text/plain' });
+            res.end('404 Not Found');
+          } else {
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(indexContent);
+          }
+        });
       } else {
         res.writeHead(500, { 'Content-Type': 'text/plain' });
         res.end('500 Server Error');
@@ -41,95 +53,35 @@ const server = http.createServer((req, res) => {
   });
 });
 
-// WebSocket server attached to HTTP server
+// WebSocket signaling server - just forwards messages between peers
 const wss = new WebSocket.Server({ server });
-
-// Connected clients
-const clients = new Map();
-let alertHistory = [];
 
 wss.on('connection', (ws, req) => {
   const clientId = Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  console.log(`🔌 Signaling client connected: ${clientId} (${wss.clients.size} total)`);
 
-  clients.set(ws, {
-    id: clientId,
-    ip: clientIp,
-    connectedAt: new Date().toISOString(),
-    alerted: false
-  });
-
-  console.log(`🔌 Client connected: ${clientId} (${clients.size} total)`);
-
-  // Send welcome + current user list
-  broadcastUserList();
-
-  // Send recent alert history (last 10)
-  ws.send(JSON.stringify({
-    type: 'history',
-    data: alertHistory.slice(-10)
-  }));
+  ws.clientId = clientId;
 
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message);
-      const client = clients.get(ws);
+      data.from = clientId; // Tag with sender ID
 
-      switch (data.type) {
-        case 'alert':
-          // Emergency alert received from a client
-          const alert = {
-            id: Date.now().toString(36),
-            clientId: client.id,
-            timestamp: new Date().toISOString(),
-            location: data.location || '📍 Unknown location',
-            lat: data.lat || null,
-            lng: data.lng || null,
-            message: data.message || '🚨 EMERGENCY!'
-          };
+      // Broadcast to ALL other clients (not sender)
+      const msg = JSON.stringify(data);
+      wss.clients.forEach((client) => {
+        if (client !== ws && client.readyState === WebSocket.OPEN) {
+          client.send(msg);
+        }
+      });
 
-          alertHistory.push(alert);
-          // Keep only last 50
-          if (alertHistory.length > 50) alertHistory.shift();
-
-          console.log(`🚨 ALERT from ${client.id}: ${alert.location}`);
-
-          // Mark this client as alerted
-          client.alerted = true;
-
-          // Broadcast to ALL connected clients (including sender)
-          broadcast({
-            type: 'emergency',
-            data: alert
-          });
-
-          // Update user list to show alerted status
-          broadcastUserList();
-          break;
-
-        case 'ping':
-          ws.send(JSON.stringify({ type: 'pong' }));
-          break;
-
-        case 'cancel':
-          // Cancel alert
-          broadcast({
-            type: 'cancel',
-            clientId: client.id
-          });
-          client.alerted = false;
-          broadcastUserList();
-          break;
-      }
     } catch (e) {
-      console.error('Invalid message:', e.message);
+      console.error('Invalid signaling message:', e.message);
     }
   });
 
   ws.on('close', () => {
-    console.log(`🔌 Client disconnected: ${clients.get(ws)?.id}`);
-    clients.delete(ws);
-    broadcastUserList();
+    console.log(`🔌 Client disconnected: ${clientId}`);
   });
 
   ws.on('error', (err) => {
@@ -137,32 +89,7 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// Broadcast to all connected clients
-function broadcast(message) {
-  const msg = JSON.stringify(message);
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(msg);
-    }
-  });
-}
-
-// Broadcast user list to all clients
-function broadcastUserList() {
-  const userList = Array.from(clients.values()).map(c => ({
-    id: c.id,
-    alerted: c.alerted,
-    connectedAt: c.connectedAt
-  }));
-
-  broadcast({
-    type: 'users',
-    count: clients.size,
-    users: userList
-  });
-}
-
 server.listen(PORT, () => {
-  console.log(`🚨 SoundAlert server running on port ${PORT}`);
-  console.log(`📡 WebSocket ready for real-time alerts`);
+  console.log(`🚨 SoundAlert Signaling Server running on port ${PORT}`);
+  console.log(`📡 This server only exchanges connection info - data flows P2P!`);
 });
