@@ -1,4 +1,4 @@
-const CACHE_NAME = 'soundalert-v5';
+const CACHE_NAME = 'soundalert-v6';
 const ASSETS = [
     '/',
     '/index.html',
