@@ -1,4 +1,4 @@
-const CACHE_NAME = 'soundalert-v7';
+const CACHE_NAME = 'soundalert-v8'; // bumped from v7 to force reinstall
 const ASSETS = [
     '/',
     '/index.html',
@@ -17,8 +17,9 @@ const ASSETS = [
 
 const API_ROUTES = ['/health', '/vapid-public-key', '/subscribe', '/broadcast'];
 
+// ─── INSTALL ──────────────────────────────────────────────────────────────────
 self.addEventListener('install', function(event) {
-    console.log('[SW] Install v7');
+    console.log('[SW] Install', CACHE_NAME);
     event.waitUntil(
         caches.open(CACHE_NAME)
             .then(cache => cache.addAll(ASSETS))
@@ -27,28 +28,33 @@ self.addEventListener('install', function(event) {
     );
 });
 
+// ─── ACTIVATE ─────────────────────────────────────────────────────────────────
 self.addEventListener('activate', function(event) {
-    console.log('[SW] Activate v7');
+    console.log('[SW] Activate', CACHE_NAME);
     event.waitUntil(
-        caches.keys().then(cacheNames => Promise.all(
-            cacheNames.map(name => {
-                if (name !== CACHE_NAME) {
-                    console.log('[SW] Deleting old cache:', name);
-                    return caches.delete(name);
-                }
-            })
-        )).then(() => self.clients.claim())
+        caches.keys()
+            .then(cacheNames => Promise.all(
+                cacheNames.map(name => {
+                    if (name !== CACHE_NAME) {
+                        console.log('[SW] Deleting old cache:', name);
+                        return caches.delete(name);
+                    }
+                })
+            ))
+            .then(() => self.clients.claim())
     );
 });
 
+// ─── FETCH ────────────────────────────────────────────────────────────────────
 self.addEventListener('fetch', function(event) {
     const url = new URL(event.request.url);
 
+    // Always hit the network for API routes — never serve from cache
     if (API_ROUTES.includes(url.pathname)) {
         event.respondWith(
             fetch(event.request).catch(() =>
                 new Response(JSON.stringify({ error: 'Network unavailable' }), {
-                    status: 503,
+                    status:  503,
                     headers: { 'Content-Type': 'application/json' }
                 })
             )
@@ -56,9 +62,11 @@ self.addEventListener('fetch', function(event) {
         return;
     }
 
+    // Cache-first for all other assets
     event.respondWith(
         caches.match(event.request).then(cachedResponse => {
             if (cachedResponse) return cachedResponse;
+
             return fetch(event.request).then(networkResponse => {
                 if (networkResponse && networkResponse.status === 200) {
                     const clone = networkResponse.clone();
@@ -67,19 +75,16 @@ self.addEventListener('fetch', function(event) {
                 return networkResponse;
             }).catch(() =>
                 new Response('[SW] Offline', {
-                    status: 503,
+                    status:     503,
                     statusText: 'Service Unavailable',
-                    headers: { 'Content-Type': 'text/plain' }
+                    headers:    { 'Content-Type': 'text/plain' }
                 })
             );
         })
     );
 });
 
-// ============================================
-// PUSH NOTIFICATIONS
-// ============================================
-
+// ─── PUSH ─────────────────────────────────────────────────────────────────────
 self.addEventListener('push', function(event) {
     console.log('[SW] Push received');
 
@@ -89,23 +94,23 @@ self.addEventListener('push', function(event) {
     } catch (e) {
         data = {
             title: 'Emergency Alert',
-            body: 'Someone needs help nearby!'
+            body:  'Someone needs help nearby!'
         };
     }
 
     const options = {
-        body: data.body || 'Emergency alert received',
-        icon: data.icon || '/icon-192.png',
-        badge: data.badge || '/badge-72.png',
-        tag: data.tag || 'emergency',
+        body:              data.body  || 'Emergency alert received',
+        icon:              data.icon  || '/icon-192.png',
+        badge:             data.badge || '/badge-72.png',
+        tag:               data.tag   || 'emergency',
         requireInteraction: true,
-        renotify: true,
-        vibrate: [200, 100, 200, 100, 400, 100, 200],
+        renotify:          true,
+        vibrate:           [200, 100, 200, 100, 400, 100, 200],
         actions: [
-            { action: 'open', title: 'OPEN ALARM' },
-            { action: 'dismiss', title: 'Dismiss' }
+            { action: 'open',    title: 'OPEN ALARM' },
+            { action: 'dismiss', title: 'Dismiss'    }
         ],
-        data: data.data || {},
+        data:   data.data || {},
         silent: false
     };
 
@@ -114,18 +119,21 @@ self.addEventListener('push', function(event) {
     );
 });
 
+// ─── NOTIFICATION CLICK ───────────────────────────────────────────────────────
 self.addEventListener('notificationclick', function(event) {
     console.log('[SW] Notification click. Action:', event.action);
     event.notification.close();
 
     const alertData = event.notification.data || {};
+
+    // User tapped "Dismiss" — do nothing further
     if (event.action === 'dismiss') return;
 
     event.waitUntil(
         clients.matchAll({ type: 'window', includeUncontrolled: true })
             .then(clientList => {
-                // If app is already open, post message directly
-                for (let client of clientList) {
+                // ── App is already open — send a message to it ──────────────
+                for (const client of clientList) {
                     if ('focus' in client) {
                         client.focus();
                         client.postMessage({
@@ -136,19 +144,19 @@ self.addEventListener('notificationclick', function(event) {
                     }
                 }
 
-                // App not open — build URL with all alertType fields so
-                // checkUrlAlarmTrigger can reconstruct the full alert
+                // ── App is not open — open it with alert params in the URL ──
+                // emergency.js reads these via checkUrlAlarmTrigger on load.
                 if (clients.openWindow) {
                     const params = new URLSearchParams({ alarm: '1' });
-                    if (alertData.alertType)      params.set('alertType', alertData.alertType);
+                    if (alertData.alertType)      params.set('alertType',      alertData.alertType);
                     if (alertData.alertTypeLabel)  params.set('alertTypeLabel', alertData.alertTypeLabel);
                     if (alertData.alertTypeShort)  params.set('alertTypeShort', alertData.alertTypeShort);
                     if (alertData.alertTypeColor)  params.set('alertTypeColor', alertData.alertTypeColor);
-                    if (alertData.lat)             params.set('lat', alertData.lat);
-                    if (alertData.lng)             params.set('lng', alertData.lng);
-                    if (alertData.location)        params.set('location', encodeURIComponent(alertData.location));
-                    if (alertData.id)              params.set('id', alertData.id);
-                    if (alertData.timestamp)       params.set('ts', alertData.timestamp);
+                    if (alertData.lat)             params.set('lat',            alertData.lat);
+                    if (alertData.lng)             params.set('lng',            alertData.lng);
+                    if (alertData.location)        params.set('location',       encodeURIComponent(alertData.location));
+                    if (alertData.id)              params.set('id',             alertData.id);
+                    if (alertData.timestamp)       params.set('ts',             alertData.timestamp);
 
                     return clients.openWindow('/?' + params.toString());
                 }
@@ -156,6 +164,7 @@ self.addEventListener('notificationclick', function(event) {
     );
 });
 
+// ─── KEEP-ALIVE PING ──────────────────────────────────────────────────────────
 self.addEventListener('message', function(event) {
     if (event.data && event.data.type === 'KEEP_ALIVE') {
         event.ports[0]?.postMessage({ status: 'alive' });

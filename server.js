@@ -6,26 +6,64 @@ const webpush = require('web-push');
 
 const PORT = process.env.PORT || 3000;
 
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BEl62iSMf-VZBdg3Zp5DzR7U8C4r-KB0fG0x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x';
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x_1f0x';
-const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:soundalert@example.com';
+// ─── VAPID ────────────────────────────────────────────────────────────────────
+// Run once to generate:  npx web-push generate-vapid-keys
+// Then set in .env / Render env vars.
+const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+const VAPID_SUBJECT     = process.env.VAPID_SUBJECT || 'mailto:soundalert@example.com';
+
+if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+  console.error('[FATAL] VAPID keys missing. Run: npx web-push generate-vapid-keys');
+  console.error('        Then add VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to your .env');
+  process.exit(1);
+}
 
 webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
-const subscriptions = new Set();
+// ─── PERSISTENT SUBSCRIPTIONS ─────────────────────────────────────────────────
+// Survives server restarts. Use a real DB (Mongo/Redis) for production.
+const SUBS_FILE = path.join(__dirname, 'subscriptions.json');
 
+let subscriptions = new Set();
+
+function loadSubs() {
+  try {
+    const raw = fs.readFileSync(SUBS_FILE, 'utf8');
+    const arr = JSON.parse(raw);
+    subscriptions = new Set(arr);
+    console.log(`[Push] Loaded ${subscriptions.size} saved subscriptions`);
+  } catch (e) {
+    subscriptions = new Set();
+    console.log('[Push] No saved subscriptions found, starting fresh');
+  }
+}
+
+function saveSubs() {
+  try {
+    fs.writeFileSync(SUBS_FILE, JSON.stringify([...subscriptions]));
+  } catch (e) {
+    console.error('[Push] Failed to save subscriptions:', e.message);
+  }
+}
+
+loadSubs();
+
+// ─── MIME TYPES ───────────────────────────────────────────────────────────────
 const mimeTypes = {
   '.html': 'text/html',
-  '.css': 'text/css',
-  '.js': 'application/javascript',
+  '.css':  'text/css',
+  '.js':   'application/javascript',
   '.json': 'application/json',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.ico': 'image/x-icon',
-  '.mp3': 'audio/mpeg'
+  '.svg':  'image/svg+xml',
+  '.png':  'image/png',
+  '.jpg':  'image/jpeg',
+  '.ico':  'image/x-icon',
+  '.mp3':  'audio/mpeg',
+  '.webmanifest': 'application/manifest+json'
 };
 
+// ─── HTTP SERVER ──────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -37,118 +75,141 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ── Health check ────────────────────────────────────────────────────────────
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', subscribers: subscriptions.size }));
+    res.end(JSON.stringify({
+      status: 'ok',
+      subscribers: subscriptions.size,
+      peers: wss ? wss.clients.size : 0
+    }));
     return;
   }
 
+  // ── VAPID public key (needed by client to subscribe) ────────────────────────
   if (req.url === '/vapid-public-key') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ publicKey: VAPID_PUBLIC_KEY }));
     return;
   }
 
+  // ── Push subscription ────────────────────────────────────────────────────────
   if (req.url === '/subscribe' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
         const subscription = JSON.parse(body);
-        subscriptions.add(JSON.stringify(subscription));
-        console.log('New push subscriber! Total:', subscriptions.size);
+
+        // Basic validation
+        if (!subscription.endpoint || !subscription.keys) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid subscription object' }));
+          return;
+        }
+
+        const subStr = JSON.stringify(subscription);
+        const isNew  = !subscriptions.has(subStr);
+        subscriptions.add(subStr);
+        if (isNew) saveSubs();
+
+        console.log(`[Push] ${isNew ? 'New' : 'Re-registered'} subscriber. Total: ${subscriptions.size}`);
         res.writeHead(201, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true }));
+        res.end(JSON.stringify({ success: true, total: subscriptions.size }));
       } catch (e) {
-        res.writeHead(400);
-        res.end('Invalid subscription');
+        console.error('[Push] Bad subscription body:', e.message);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid JSON' }));
       }
     });
     return;
   }
 
-  // Broadcast push notification to all subscribers
+  // ── Broadcast emergency to all push subscribers ──────────────────────────────
   if (req.url === '/broadcast' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
         const alert = JSON.parse(body);
-        console.log('Broadcasting to', subscriptions.size, 'subscribers. Type:', alert.alertType);
+        console.log(`[Push] Broadcasting to ${subscriptions.size} subscribers. Type: ${alert.alertType}`);
 
-        // Build a human-readable title using the alert type
-        const typeLabel = alert.alertTypeLabel || 'EMERGENCY';
+        const typeLabel  = alert.alertTypeLabel || 'EMERGENCY';
         const notifTitle = `🚨 ${typeLabel.toUpperCase()} ALERT!`;
-        const notifBody = alert.location
-          ? `${alert.location}`
-          : 'Someone needs help nearby!';
+        const notifBody  = alert.location || 'Someone needs help nearby!';
 
         const payload = JSON.stringify({
           title: notifTitle,
-          body: notifBody,
-          icon: '/icon-192.png',
+          body:  notifBody,
+          icon:  '/icon-192.png',
           badge: '/badge-72.png',
-          tag: 'emergency-' + (alert.id || Date.now()),
+          tag:   'emergency-' + (alert.id || Date.now()),
           requireInteraction: true,
           actions: [
-            { action: 'open', title: 'OPEN ALARM' },
-            { action: 'dismiss', title: 'Dismiss' }
+            { action: 'open',    title: 'OPEN ALARM' },
+            { action: 'dismiss', title: 'Dismiss'    }
           ],
           data: {
-            // Alert type — the critical fields that were missing
-            alertType: alert.alertType || null,
+            alertType:      alert.alertType      || null,
             alertTypeLabel: alert.alertTypeLabel || null,
             alertTypeShort: alert.alertTypeShort || null,
             alertTypeColor: alert.alertTypeColor || null,
-            // Location
-            lat: alert.lat || null,
-            lng: alert.lng || null,
-            location: alert.location || 'Unknown location',
-            // Meta
-            id: alert.id || null,
-            timestamp: alert.timestamp || new Date().toISOString(),
-            timeFormatted: alert.timeFormatted || null,
-            message: alert.message || notifTitle,
-            description: alert.description || null,
+            lat:            alert.lat            || null,
+            lng:            alert.lng            || null,
+            location:       alert.location       || 'Unknown location',
+            id:             alert.id             || null,
+            timestamp:      alert.timestamp      || new Date().toISOString(),
+            timeFormatted:  alert.timeFormatted  || null,
+            message:        alert.message        || notifTitle,
+            description:    alert.description    || null,
             url: alert.lat && alert.lng
               ? `https://www.google.com/maps?q=${alert.lat},${alert.lng}`
               : '/'
           }
         });
 
-        const promises = Array.from(subscriptions).map(subStr => {
+        const deadSubs  = [];
+        const promises  = [...subscriptions].map(subStr => {
           const sub = JSON.parse(subStr);
           return webpush.sendNotification(sub, payload).catch(err => {
-            console.error('Push failed:', err.statusCode);
+            console.error('[Push] Send failed:', err.statusCode, err.message);
+            // 410 Gone / 404 Not Found = subscription is expired, remove it
             if (err.statusCode === 410 || err.statusCode === 404) {
-              subscriptions.delete(subStr);
+              deadSubs.push(subStr);
             }
           });
         });
 
         Promise.all(promises).then(() => {
+          if (deadSubs.length > 0) {
+            deadSubs.forEach(s => subscriptions.delete(s));
+            saveSubs();
+            console.log(`[Push] Removed ${deadSubs.length} expired subscriptions`);
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, sent: subscriptions.size }));
+          res.end(JSON.stringify({ success: true, sent: subscriptions.size - deadSubs.length }));
         });
 
       } catch (e) {
-        res.writeHead(400);
-        res.end('Invalid alert data');
+        console.error('[Push] Broadcast error:', e.message);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid alert data' }));
       }
     });
     return;
   }
 
-  // Static files
-  let filePath = req.url === '/' ? '/index.html' : req.url;
+  // ── Static files ─────────────────────────────────────────────────────────────
+  let filePath = req.url === '/' ? '/index.html' : req.url.split('?')[0];
   filePath = path.join(__dirname, 'public', filePath);
 
-  const ext = path.extname(filePath).toLowerCase();
+  const ext         = path.extname(filePath).toLowerCase();
   const contentType = mimeTypes[ext] || 'application/octet-stream';
 
   fs.readFile(filePath, (err, content) => {
     if (err) {
       if (err.code === 'ENOENT') {
+        // SPA fallback
         const indexPath = path.join(__dirname, 'public', 'index.html');
         fs.readFile(indexPath, (err2, indexContent) => {
           if (err2) {
@@ -170,37 +231,73 @@ const server = http.createServer((req, res) => {
   });
 });
 
-// WebSocket for real-time P2P signaling
+// ─── WEBSOCKET — P2P SIGNALING ────────────────────────────────────────────────
+// FIX 1: Don't overwrite the client's own `from` field.
+// FIX 2: Route targeted messages (offer/answer/ice) only to their intended peer.
+// FIX 3: Track peerId → ws so targeted delivery is O(1) not O(n).
+
 const wss = new WebSocket.Server({ server });
 
-wss.on('connection', (ws, req) => {
-  const clientId = Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-  console.log(`Client connected: ${clientId} (${wss.clients.size} total)`);
-  ws.clientId = clientId;
+// Map of peerId (string) → WebSocket
+const peerMap = new Map();
 
-  ws.on('message', (message) => {
+wss.on('connection', (ws) => {
+  console.log(`[WS] Client connected. Total: ${wss.clients.size}`);
+
+  ws.on('message', (rawMessage) => {
+    let data;
     try {
-      const data = JSON.parse(message);
-      data.from = clientId;
-      const msg = JSON.stringify(data);
-      wss.clients.forEach((client) => {
+      data = JSON.parse(rawMessage);
+    } catch (e) {
+      console.error('[WS] Invalid JSON:', e.message);
+      return;
+    }
+
+    // Register peerId when we first hear from this client
+    if (data.from && !ws.peerId) {
+      ws.peerId = data.from;
+      peerMap.set(data.from, ws);
+      console.log(`[WS] Registered peer: ${data.from}. Known peers: ${peerMap.size}`);
+    }
+
+    const msgStr = rawMessage.toString();
+
+    if (data.to) {
+      // ── Targeted message (offer / answer / ice-candidate) ──────────────────
+      const targetWs = peerMap.get(data.to);
+      if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+        targetWs.send(msgStr);
+      } else {
+        console.warn(`[WS] Target peer not found or closed: ${data.to}`);
+      }
+    } else {
+      // ── Broadcast message (peer-hello) ─────────────────────────────────────
+      wss.clients.forEach(client => {
         if (client !== ws && client.readyState === WebSocket.OPEN) {
-          client.send(msg);
+          client.send(msgStr);
         }
       });
-    } catch (e) {
-      console.error('Invalid message:', e.message);
     }
   });
 
   ws.on('close', () => {
-    console.log(`Client disconnected: ${clientId}`);
+    if (ws.peerId) {
+      peerMap.delete(ws.peerId);
+      console.log(`[WS] Peer disconnected: ${ws.peerId}. Known peers: ${peerMap.size}`);
+    } else {
+      console.log('[WS] Unregistered client disconnected');
+    }
+  });
+
+  ws.on('error', (err) => {
+    console.error('[WS] Socket error:', err.message);
   });
 });
 
+// ─── START ────────────────────────────────────────────────────────────────────
 server.listen(PORT, () => {
-  console.log(`SoundAlert server running on port ${PORT}`);
-  console.log(`WebSocket ready for P2P signaling`);
-  console.log(`Push notifications: ${subscriptions.size} subscribers`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`[Server] Running on port ${PORT}`);
+  console.log(`[Server] WebSocket signaling ready`);
+  console.log(`[Server] Push subscribers loaded: ${subscriptions.size}`);
+  console.log(`[Server] Health: http://localhost:${PORT}/health`);
 });

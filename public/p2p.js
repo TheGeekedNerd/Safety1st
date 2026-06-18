@@ -3,11 +3,12 @@
    ======================================== */
 
 const P2P = {
-    peerConnections: new Map(),
-    dataChannels: new Map(),
+    peerConnections: new Map(),   // peerId → RTCPeerConnection
+    dataChannels: new Map(),      // peerId → RTCDataChannel
     localId: null,
     signalingSocket: null,
     connectedPeers: new Set(),
+    pendingCandidates: new Map(), // peerId → RTCIceCandidate[] (queued before remote desc is set)
     debug: true,
 
     log: function(...args) {
@@ -32,18 +33,15 @@ const P2P = {
             idDisplay = document.createElement('div');
             idDisplay.id = 'myDeviceId';
             idDisplay.style.cssText = 'text-align:center;font-size:11px;color:var(--text-muted);margin-bottom:8px;';
-
             const card = document.querySelector('.card');
-            if (card) {
-                card.insertBefore(idDisplay, card.children[2]);
-            }
+            if (card) card.insertBefore(idDisplay, card.children[2]);
         }
         idDisplay.textContent = `This device: ${this.localId.toUpperCase()}`;
     },
 
     connectSignaling: function() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}`;
+        const wsUrl    = `${protocol}//${window.location.host}`;
 
         this.log('Connecting to signaling:', wsUrl);
 
@@ -53,6 +51,7 @@ const P2P = {
             this.signalingSocket.onopen = () => {
                 this.log('Signaling connected');
                 this.updateConnectionStatus('connected');
+                // Announce ourselves to all existing peers
                 setTimeout(() => {
                     this.sendSignal({ type: 'peer-hello', from: this.localId });
                 }, 500);
@@ -69,7 +68,7 @@ const P2P = {
             };
 
             this.signalingSocket.onclose = () => {
-                this.log('Signaling disconnected');
+                this.log('Signaling disconnected, reconnecting in 3s...');
                 this.updateConnectionStatus('disconnected');
                 setTimeout(() => this.connectSignaling(), 3000);
             };
@@ -89,27 +88,38 @@ const P2P = {
             this.signalingSocket.send(JSON.stringify(data));
             return true;
         }
+        this.log('Cannot send signal — socket not open');
         return false;
     },
 
     handleSignalingMessage: function(msg) {
         const from = msg.from;
+
+        // Ignore messages with no sender or messages from ourselves
         if (!from || from === this.localId) return;
+
+        // For targeted messages, ignore if we're not the intended recipient
+        if (msg.to && msg.to !== this.localId) return;
 
         switch (msg.type) {
             case 'peer-hello':
+                // A new peer joined — we initiate the offer
                 this.log('Peer hello from:', from);
-                this.createPeerConnection(from);
-                this.sendOffer(from);
+                if (!this.peerConnections.has(from)) {
+                    this.sendOffer(from);
+                }
                 break;
+
             case 'offer':
                 this.log('Offer from:', from);
                 this.handleOffer(from, msg.sdp);
                 break;
+
             case 'answer':
                 this.log('Answer from:', from);
                 this.handleAnswer(from, msg.sdp);
                 break;
+
             case 'ice-candidate':
                 this.handleIceCandidate(from, msg.candidate);
                 break;
@@ -125,7 +135,7 @@ const P2P = {
 
         const pc = new RTCPeerConnection({
             iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun.l.google.com:19302'  },
                 { urls: 'stun:stun1.l.google.com:19302' },
                 { urls: 'stun:stun2.l.google.com:19302' }
             ]
@@ -136,7 +146,7 @@ const P2P = {
                 this.log('Sending ICE candidate to:', peerId);
                 this.sendSignal({
                     type: 'ice-candidate',
-                    to: peerId,
+                    to:   peerId,
                     from: this.localId,
                     candidate: event.candidate
                 });
@@ -144,24 +154,23 @@ const P2P = {
         };
 
         pc.onconnectionstatechange = () => {
-            this.log(`Peer ${peerId} state:`, pc.connectionState);
+            this.log(`Peer ${peerId} connection state:`, pc.connectionState);
             if (pc.connectionState === 'connected') {
                 this.connectedPeers.add(peerId);
                 this.updatePeerDisplay();
             } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-                this.connectedPeers.delete(peerId);
-                this.peerConnections.delete(peerId);
-                this.dataChannels.delete(peerId);
-                this.updatePeerDisplay();
+                this.cleanupPeer(peerId);
             }
         };
 
+        // Receiver side: data channel comes in via this event
         pc.ondatachannel = (event) => {
             this.log('Data channel received from:', peerId);
             this.setupDataChannel(peerId, event.channel);
         };
 
         this.peerConnections.set(peerId, pc);
+        this.pendingCandidates.set(peerId, []);
         return pc;
     },
 
@@ -186,9 +195,7 @@ const P2P = {
 
         channel.onclose = () => {
             this.log('Data channel CLOSED with:', peerId);
-            this.connectedPeers.delete(peerId);
-            this.dataChannels.delete(peerId);
-            this.updatePeerDisplay();
+            this.cleanupPeer(peerId);
         };
 
         channel.onerror = (err) => {
@@ -196,9 +203,17 @@ const P2P = {
         };
     },
 
-    sendOffer: async function(peerId) {
-        const pc = this.createPeerConnection(peerId);
+    cleanupPeer: function(peerId) {
+        this.connectedPeers.delete(peerId);
+        this.dataChannels.delete(peerId);
+        this.peerConnections.delete(peerId);
+        this.pendingCandidates.delete(peerId);
+        this.updatePeerDisplay();
+        this.log('Cleaned up peer:', peerId);
+    },
 
+    sendOffer: async function(peerId) {
+        const pc      = this.createPeerConnection(peerId);
         const channel = pc.createDataChannel('alerts', { ordered: true });
         this.setupDataChannel(peerId, channel);
 
@@ -209,13 +224,14 @@ const P2P = {
 
             this.sendSignal({
                 type: 'offer',
-                to: peerId,
+                to:   peerId,
                 from: this.localId,
-                sdp: pc.localDescription
+                sdp:  pc.localDescription
             });
             this.log('Offer sent to:', peerId);
         } catch (e) {
             console.error('[P2P] Failed to create offer:', e);
+            this.cleanupPeer(peerId);
         }
     },
 
@@ -223,30 +239,41 @@ const P2P = {
         const pc = this.createPeerConnection(peerId);
 
         try {
-            this.log('Setting remote description for:', peerId);
+            this.log('Setting remote description (offer) for:', peerId);
             await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+
+            // Flush any ICE candidates that arrived before the remote desc was set
+            await this.flushPendingCandidates(peerId);
+
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
 
             this.sendSignal({
                 type: 'answer',
-                to: peerId,
+                to:   peerId,
                 from: this.localId,
-                sdp: pc.localDescription
+                sdp:  pc.localDescription
             });
             this.log('Answer sent to:', peerId);
         } catch (e) {
             console.error('[P2P] Failed to handle offer:', e);
+            this.cleanupPeer(peerId);
         }
     },
 
     handleAnswer: async function(peerId, sdp) {
         const pc = this.peerConnections.get(peerId);
-        if (!pc) return;
+        if (!pc) {
+            this.log('No peer connection found for answer from:', peerId);
+            return;
+        }
 
         try {
-            this.log('Setting answer from:', peerId);
+            this.log('Setting remote description (answer) for:', peerId);
             await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+
+            // Flush any ICE candidates that arrived before the remote desc was set
+            await this.flushPendingCandidates(peerId);
         } catch (e) {
             console.error('[P2P] Failed to handle answer:', e);
         }
@@ -256,17 +283,43 @@ const P2P = {
         const pc = this.peerConnections.get(peerId);
         if (!pc) return;
 
+        // If remote description isn't set yet, queue the candidate
+        if (!pc.remoteDescription) {
+            this.log('Queuing ICE candidate for:', peerId);
+            const queue = this.pendingCandidates.get(peerId) || [];
+            queue.push(candidate);
+            this.pendingCandidates.set(peerId, queue);
+            return;
+        }
+
         try {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (e) {
-            console.error('[P2P] Failed to add ICE:', e);
+            console.error('[P2P] Failed to add ICE candidate:', e);
         }
     },
 
-    broadcastAlert: function(alertData) {
-        const message = JSON.stringify({ type: 'emergency', data: alertData });
+    flushPendingCandidates: async function(peerId) {
+        const pc        = this.peerConnections.get(peerId);
+        const candidates = this.pendingCandidates.get(peerId) || [];
 
-        let sentCount = 0;
+        if (!pc || candidates.length === 0) return;
+
+        this.log(`Flushing ${candidates.length} queued ICE candidates for:`, peerId);
+        for (const candidate of candidates) {
+            try {
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (e) {
+                console.error('[P2P] Failed to flush ICE candidate:', e);
+            }
+        }
+        this.pendingCandidates.set(peerId, []);
+    },
+
+    broadcastAlert: function(alertData) {
+        const message  = JSON.stringify({ type: 'emergency', data: alertData });
+        let sentCount  = 0;
+
         this.dataChannels.forEach((channel, peerId) => {
             if (channel.readyState === 'open') {
                 try {
@@ -277,36 +330,38 @@ const P2P = {
                     console.error(`[P2P] Failed to send to ${peerId}:`, e);
                 }
             } else {
-                this.log('Channel not open for peer:', peerId, 'state:', channel.readyState);
+                this.log('Channel not open for peer:', peerId, '— state:', channel.readyState);
             }
         });
 
-        this.log(`Total peers alerted: ${sentCount}`);
+        this.log(`Total peers alerted via P2P: ${sentCount}`);
         return sentCount;
     },
 
     handleP2PMessage: function(data, fromPeerId) {
         switch (data.type) {
             case 'emergency':
-                this.log('INCOMING ALERT from:', fromPeerId);
-                Emergency.handleIncomingAlert(data.data);
+                this.log('INCOMING ALERT from peer:', fromPeerId);
+                if (window.Emergency) {
+                    Emergency.handleIncomingAlert(data.data);
+                }
                 break;
+            default:
+                this.log('Unknown P2P message type:', data.type);
         }
     },
 
     updatePeerDisplay: function() {
-        const count = this.connectedPeers.size;
-        const el = document.getElementById('userCount');
+        const count    = this.connectedPeers.size;
+        const el       = document.getElementById('userCount');
         const liveUsers = document.getElementById('liveUsers');
 
-        this.log('Updating display, peers:', count);
+        this.log('Connected peers:', count);
 
         if (el) {
-            if (count === 0) {
-                el.textContent = '1 user (you)';
-            } else {
-                el.textContent = `${count + 1} users connected`;
-            }
+            el.textContent = count === 0
+                ? '1 user (you)'
+                : `${count + 1} users connected`;
         }
 
         if (liveUsers) {
@@ -319,7 +374,8 @@ const P2P = {
 
     updateConnectionStatus: function(status) {
         const el = document.getElementById('userCount');
-        if (el && status === 'disconnected') {
+        if (!el) return;
+        if (status === 'disconnected' || status === 'error') {
             el.textContent = 'Reconnecting...';
         }
     },
@@ -332,12 +388,14 @@ const P2P = {
             list.innerHTML = `
                 <div class="device-row">
                     <span class="device-name">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+                            <line x1="12" y1="18" x2="12.01" y2="18"/>
+                        </svg>
                         No peers connected
                     </span>
                     <span class="badge offline">Waiting</span>
-                </div>
-            `;
+                </div>`;
             return;
         }
 
@@ -346,14 +404,15 @@ const P2P = {
             html += `
                 <div class="device-row">
                     <span class="device-name">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+                            <line x1="12" y1="18" x2="12.01" y2="18"/>
+                        </svg>
                         User ${peerId.substr(-4).toUpperCase()}
                     </span>
                     <span class="badge online">Connected</span>
-                </div>
-            `;
+                </div>`;
         });
-
         list.innerHTML = html;
     },
 
