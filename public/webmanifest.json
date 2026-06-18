@@ -1,8 +1,10 @@
 {
+    "id": "soundalert-emergency",
     "name": "SoundAlert - Emergency Button",
     "short_name": "SoundAlert",
     "description": "One-tap emergency alert system",
     "start_url": "/",
+    "scope": "/",
     "display": "standalone",
     "background_color": "#111111",
     "theme_color": "#E24B4A",

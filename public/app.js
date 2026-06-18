@@ -10,19 +10,16 @@ const App = {
         if (this.initialized) return;
         this.initialized = true;
 
-        console.log('🚨 SoundAlert initializing...');
+        console.log('SoundAlert initializing...');
 
-        // Register Service Worker with push support
         this.registerSW();
-
-        // Request notification permission
         this.requestNotificationPermission();
-
-        // Add install prompt
         this.setupInstallPrompt();
-
-        // Update status
         this.updateStatus();
+
+        // Alarm trigger from SW or URL
+        this.setupAlarmListener();
+        this.checkUrlAlarmTrigger();
 
         // Touch feedback
         const btn = document.getElementById('emergencyBtn');
@@ -37,9 +34,6 @@ const App = {
         }
     },
 
-    /**
-     * Register Service Worker
-     */
     registerSW: async function() {
         if (!('serviceWorker' in navigator)) {
             console.log('Service Worker not supported');
@@ -48,42 +42,33 @@ const App = {
 
         try {
             const registration = await navigator.serviceWorker.register('sw.js');
-            console.log('✅ SW registered');
-
-            // Subscribe to push notifications
+            console.log('SW registered');
             await this.subscribeToPush(registration);
-
         } catch (err) {
             console.error('SW registration failed:', err);
         }
     },
 
-    /**
-     * Subscribe to push notifications
-     */
     subscribeToPush: async function(registration) {
         try {
-            // Get VAPID public key from server
             const response = await fetch('/vapid-public-key');
             const { publicKey } = await response.json();
 
-            // Subscribe
             const subscription = await registration.pushManager.subscribe({
                 userVisibleOnly: true,
                 applicationServerKey: this.urlBase64ToUint8Array(publicKey)
             });
 
-            console.log('🔔 Push subscription:', subscription);
+            console.log('Push subscription:', subscription);
             this.pushSubscription = subscription;
 
-            // Send subscription to server
             await fetch('/subscribe', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(subscription)
             });
 
-            console.log('🔔 Push subscription saved to server');
+            console.log('Push subscription saved to server');
             this.showInstallPrompt();
 
         } catch (err) {
@@ -91,9 +76,6 @@ const App = {
         }
     },
 
-    /**
-     * Convert VAPID key
-     */
     urlBase64ToUint8Array: function(base64String) {
         const padding = '='.repeat((4 - base64String.length % 4) % 4);
         const base64 = (base64String + padding)
@@ -109,9 +91,6 @@ const App = {
         return outputArray;
     },
 
-    /**
-     * Request notification permission
-     */
     requestNotificationPermission: async function() {
         if (!('Notification' in window)) return;
 
@@ -121,9 +100,6 @@ const App = {
         }
     },
 
-    /**
-     * Setup PWA install prompt
-     */
     setupInstallPrompt: function() {
         let deferredPrompt;
 
@@ -134,26 +110,22 @@ const App = {
         });
 
         window.addEventListener('appinstalled', () => {
-            console.log('✅ PWA installed');
+            console.log('PWA installed');
             deferredPrompt = null;
             this.hideInstallBanner();
         });
     },
 
-    /**
-     * Show install banner
-     */
     showInstallBanner: function(deferredPrompt) {
-        // Create install banner if not exists
         let banner = document.getElementById('installBanner');
         if (!banner) {
             banner = document.createElement('div');
             banner.id = 'installBanner';
             banner.innerHTML = `
                 <div style="position:fixed;bottom:0;left:0;right:0;background:var(--red);color:white;padding:16px;text-align:center;z-index:9999;display:flex;align-items:center;justify-content:center;gap:12px;">
-                    <span>📲 Install SoundAlert for emergency alerts even when closed</span>
+                    <span>Install SoundAlert for emergency alerts even when closed</span>
                     <button id="installBtn" style="background:white;color:var(--red);border:none;padding:8px 16px;border-radius:8px;font-weight:600;cursor:pointer;">Install</button>
-                    <button id="dismissInstall" style="background:transparent;color:white;border:1px solid white;padding:8px 12px;border-radius:8px;cursor:pointer;">✕</button>
+                    <button id="dismissInstall" style="background:transparent;color:white;border:1px solid white;padding:8px 12px;border-radius:8px;cursor:pointer;">X</button>
                 </div>
             `;
             document.body.appendChild(banner);
@@ -180,16 +152,53 @@ const App = {
     },
 
     showInstallPrompt: function() {
-        // Also show a subtle prompt in the UI
         const liveUsers = document.getElementById('liveUsers');
         if (liveUsers && !window.matchMedia('(display-mode: standalone)').matches) {
             // Not installed yet
         }
     },
 
-    /**
-     * Update status display
-     */
+    // ===== ALARM TRIGGER FROM SERVICE WORKER =====
+    setupAlarmListener: function() {
+        if (!('serviceWorker' in navigator)) return;
+
+        navigator.serviceWorker.addEventListener('message', (event) => {
+            if (event.data && event.data.type === 'TRIGGER_EMERGENCY_ALARM') {
+                console.log('SW triggered alarm!');
+                this.triggerIncomingAlarm(event.data.data);
+            }
+        });
+    },
+
+    checkUrlAlarmTrigger: function() {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('alarm') === '1') {
+            console.log('App opened from alarm notification!');
+            const alertData = {
+                lat: params.get('lat'),
+                lng: params.get('lng'),
+                timestamp: new Date().toISOString(),
+                location: params.get('lat')
+                    ? `${params.get('lat')}, ${params.get('lng')}`
+                    : 'Location unknown',
+                type: 'push'
+            };
+            setTimeout(() => {
+                this.triggerIncomingAlarm(alertData);
+            }, 500);
+
+            window.history.replaceState({}, document.title, '/');
+        }
+    },
+
+    triggerIncomingAlarm: function(alertData) {
+        if (window.Emergency && Emergency.handleIncomingAlert) {
+            Emergency.handleIncomingAlert(alertData);
+        } else {
+            console.error('Emergency module not loaded yet');
+        }
+    },
+
     updateStatus: function() {
         const statusText = document.getElementById('statusText');
         const statusDot = document.getElementById('statusDot');
@@ -204,7 +213,7 @@ const App = {
     },
 
     getVersion: function() {
-        return '4.0-pwa';
+        return '4.1-pwa';
     }
 };
 

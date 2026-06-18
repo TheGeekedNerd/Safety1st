@@ -64,7 +64,7 @@ const server = http.createServer((req, res) => {
       try {
         const subscription = JSON.parse(body);
         subscriptions.add(JSON.stringify(subscription));
-        console.log('🔔 New push subscriber! Total:', subscriptions.size);
+        console.log('New push subscriber! Total:', subscriptions.size);
         res.writeHead(201, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       } catch (e) {
@@ -82,34 +82,34 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const alert = JSON.parse(body);
-        console.log('📡 Broadcasting push to', subscriptions.size, 'subscribers');
+        console.log('Broadcasting push to', subscriptions.size, 'subscribers');
 
         const payload = JSON.stringify({
-          title: '🚨 EMERGENCY ALERT!',
+          title: 'EMERGENCY ALERT!',
           body: alert.location || 'Someone needs help nearby!',
           icon: '/icon-192.png',
           badge: '/badge-72.png',
-          tag: 'emergency-' + alert.id,
+          tag: 'emergency-' + (alert.id || Date.now()),
           requireInteraction: true,
           actions: [
-            { action: 'open', title: 'View Location' },
+            { action: 'open', title: 'OPEN ALARM' },
             { action: 'dismiss', title: 'Dismiss' }
           ],
           data: {
-            lat: alert.lat,
-            lng: alert.lng,
-            url: alert.lat && alert.lng 
+            lat: alert.lat || null,
+            lng: alert.lng || null,
+            location: alert.location || 'Unknown location',
+            url: alert.lat && alert.lng
               ? `https://www.google.com/maps?q=${alert.lat},${alert.lng}`
-              : '/'
+              : '/',
+            timestamp: alert.timestamp || new Date().toISOString()
           }
         });
 
-        // Send to all subscribers
         const promises = Array.from(subscriptions).map(subStr => {
           const sub = JSON.parse(subStr);
           return webpush.sendNotification(sub, payload).catch(err => {
             console.error('Push failed:', err.statusCode);
-            // Remove invalid subscriptions
             if (err.statusCode === 410 || err.statusCode === 404) {
               subscriptions.delete(subStr);
             }
@@ -165,7 +165,7 @@ const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws, req) => {
   const clientId = Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-  console.log(`🔌 Client connected: ${clientId} (${wss.clients.size} total)`);
+  console.log(`Client connected: ${clientId} (${wss.clients.size} total)`);
 
   ws.clientId = clientId;
 
@@ -187,13 +187,13 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    console.log(`🔌 Client disconnected: ${clientId}`);
+    console.log(`Client disconnected: ${clientId}`);
   });
 });
 
 server.listen(PORT, () => {
-  console.log(`🚨 SoundAlert server running on port ${PORT}`);
-  console.log(`📡 WebSocket ready for P2P signaling`);
-  console.log(`🔔 Push notifications: ${subscriptions.size} subscribers`);
-  console.log(`🏥 Health check: http://localhost:${PORT}/health`);
+  console.log(`SoundAlert server running on port ${PORT}`);
+  console.log(`WebSocket ready for P2P signaling`);
+  console.log(`Push notifications: ${subscriptions.size} subscribers`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
 });

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'soundalert-v3';
+const CACHE_NAME = 'soundalert-v4';
 const ASSETS = [
     '/',
     '/index.html',
@@ -19,7 +19,7 @@ self.addEventListener('install', function(event) {
     event.waitUntil(
         caches.open(CACHE_NAME)
             .then(function(cache) {
-                console.log('📦 Caching assets...');
+                console.log('[SW] Caching assets...');
                 return cache.addAll(ASSETS);
             })
             .then(function() {
@@ -61,7 +61,7 @@ self.addEventListener('fetch', function(event) {
                         return networkResponse;
                     })
                     .catch(function() {
-                        return new Response('⚠️ Offline', {
+                        return new Response('[SW] Offline', {
                             status: 503,
                             statusText: 'Service Unavailable',
                             headers: { 'Content-Type': 'text/plain' }
@@ -72,18 +72,18 @@ self.addEventListener('fetch', function(event) {
 });
 
 // ============================================
-// PUSH NOTIFICATIONS
+// PUSH NOTIFICATIONS + ALARM TRIGGER
 // ============================================
 
 self.addEventListener('push', function(event) {
-    console.log('🔔 Push received:', event);
+    console.log('[SW] Push received:', event);
 
     let data = {};
     try {
         data = event.data.json();
     } catch (e) {
         data = {
-            title: '🚨 Emergency Alert',
+            title: 'Emergency Alert',
             body: 'Someone needs help nearby!',
             icon: '/icon-192.png'
         };
@@ -97,38 +97,52 @@ self.addEventListener('push', function(event) {
         requireInteraction: true,
         vibrate: [200, 100, 200, 100, 400, 100, 200],
         actions: data.actions || [
-            { action: 'open', title: 'View Location' },
+            { action: 'open', title: 'OPEN ALARM' },
             { action: 'dismiss', title: 'Dismiss' }
         ],
         data: data.data || {}
     };
 
     event.waitUntil(
-        self.registration.showNotification(data.title || '🚨 Emergency Alert!', options)
+        self.registration.showNotification(data.title || 'Emergency Alert!', options)
     );
 });
 
 // Handle notification clicks
 self.addEventListener('notificationclick', function(event) {
-    console.log('🔔 Notification clicked:', event.action);
-
+    console.log('[SW] Notification clicked:', event.action);
     event.notification.close();
 
-    const urlToOpen = event.notification.data?.url || '/';
+    const alertData = event.notification.data || {};
 
     event.waitUntil(
         clients.matchAll({ type: 'window', includeUncontrolled: true })
             .then(function(clientList) {
-                // If app is already open, focus it
+                // If app is already open, focus it and trigger alarm
                 for (let client of clientList) {
-                    if (client.url === urlToOpen && 'focus' in client) {
-                        return client.focus();
+                    if ('focus' in client) {
+                        client.focus();
+                        client.postMessage({
+                            type: 'TRIGGER_EMERGENCY_ALARM',
+                            data: alertData
+                        });
+                        return;
                     }
                 }
-                // Otherwise open new window
+                // Otherwise open new window with alarm flag
                 if (clients.openWindow) {
-                    return clients.openWindow(urlToOpen);
+                    const alarmUrl = alertData.lat && alertData.lng
+                        ? `/?alarm=1&lat=${alertData.lat}&lng=${alertData.lng}&time=${Date.now()}`
+                        : '/?alarm=1';
+                    return clients.openWindow(alarmUrl);
                 }
             })
     );
+});
+
+// Listen for messages from the page
+self.addEventListener('message', function(event) {
+    if (event.data && event.data.type === 'KEEP_ALIVE') {
+        event.ports[0]?.postMessage({ status: 'alive' });
+    }
 });
