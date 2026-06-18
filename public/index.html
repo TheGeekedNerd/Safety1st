@@ -12,6 +12,100 @@
     <link rel="stylesheet" href="style.css">
     <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23E24B4A'/%3E%3Cpath d='M50 15L20 65a5 5 0 004.3 7.5h51.4a5 5 0 004.3-7.5L50 15z' fill='white'/%3E%3C/svg%3E">
 <base target="_blank">
+<style>
+    /* Alert type buttons */
+    .alert-type-zone {
+        display: flex;
+        gap: 12px;
+        padding: 0 20px 20px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .alert-type-btn {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 18px 12px;
+        border-radius: 16px;
+        border: 2px solid;
+        background: transparent;
+        cursor: pointer;
+        font-family: inherit;
+        transition: background 0.15s ease, transform 0.1s ease;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .alert-type-btn:active {
+        transform: scale(0.97);
+    }
+
+    .alert-type-btn.gbv {
+        border-color: #E24B4A;
+        color: #E24B4A;
+    }
+
+    .alert-type-btn.gbv:hover,
+    .alert-type-btn.gbv:active {
+        background: rgba(226, 75, 74, 0.12);
+    }
+
+    .alert-type-btn.crime {
+        border-color: #F59E0B;
+        color: #F59E0B;
+    }
+
+    .alert-type-btn.crime:hover,
+    .alert-type-btn.crime:active {
+        background: rgba(245, 158, 11, 0.12);
+    }
+
+    .alert-type-btn .btn-type-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+    }
+
+    .alert-type-btn.gbv .btn-type-icon {
+        background: #E24B4A;
+    }
+
+    .alert-type-btn.crime .btn-type-icon {
+        background: #F59E0B;
+    }
+
+    .alert-type-btn .btn-type-label {
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+        text-align: center;
+        line-height: 1.2;
+    }
+
+    .alert-type-btn .btn-type-sub {
+        font-size: 10px;
+        font-weight: 400;
+        opacity: 0.65;
+        text-align: center;
+        line-height: 1.3;
+    }
+
+    .alert-type-label {
+        text-align: center;
+        font-size: 11px;
+        color: var(--text-muted, #666);
+        padding: 0 20px 10px;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+    }
+</style>
 </head>
 <body>
 
@@ -30,7 +124,7 @@
             <div class="header-text">
                 <h1>SoundAlert</h1>
                 <p class="subtitle">One tap. Instant help.</p>
-            <button onclick="Emergency.testSound()" style="font-size:11px;background:var(--bg);border:0.5px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text-muted);cursor:pointer;margin-top:6px;">🔊 Test Alarm</button>
+                <button onclick="Emergency.testSound()" style="font-size:11px;background:var(--bg);border:0.5px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text-muted);cursor:pointer;margin-top:6px;">🔊 Test Alarm</button>
             </div>
         </header>
 
@@ -60,22 +154,39 @@
             </button>
         </div>
 
-        <!-- Emergency Button -->
-        <div class="btn-zone" id="btnZone">
-            <div class="btn-ring" aria-hidden="true"></div>
+        <!-- Emergency Type Buttons -->
+        <p class="alert-type-label">Select emergency type</p>
+        <div class="alert-type-zone">
             <button
-                class="emergency-btn"
-                id="emergencyBtn"
-                onclick="Emergency.trigger()"
-                aria-label="Send emergency alert"
+                class="alert-type-btn gbv"
+                onclick="Emergency.trigger('GBV')"
+                aria-label="Report GBV or Femicide emergency"
             >
-                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-                    <line x1="12" y1="9" x2="12" y2="13"/>
-                    <line x1="12" y1="17" x2="12.01" y2="17"/>
-                </svg>
-                <span class="btn-label">Emergency</span>
-                <span class="btn-hint">Tap to alert</span>
+                <div class="btn-type-icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                </div>
+                <span class="btn-type-label">GBV &amp;<br>Femicide</span>
+                <span class="btn-type-sub">Gender-based violence</span>
+            </button>
+
+            <button
+                class="alert-type-btn crime"
+                onclick="Emergency.trigger('CRIME')"
+                aria-label="Report crime or lawlessness emergency"
+            >
+                <div class="btn-type-icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                </div>
+                <span class="btn-type-label">Crime &amp;<br>Lawlessness</span>
+                <span class="btn-type-sub">Theft, assault, disorder</span>
             </button>
         </div>
 

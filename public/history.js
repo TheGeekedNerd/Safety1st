@@ -6,9 +6,6 @@ const History = {
     entries: [],
     storageKey: 'emergencyHistory',
 
-    /**
-     * Load history from localStorage
-     */
     load: function() {
         try {
             const data = localStorage.getItem(this.storageKey);
@@ -20,17 +17,17 @@ const History = {
         return this.entries;
     },
 
-    /**
-     * Save an alert to history (outgoing)
-     */
-    save: function(locationText) {
+    // alertType and alertTypeLabel are now passed through from Emergency.trigger()
+    save: function(locationText, alertType, alertTypeLabel) {
         const entry = {
             id: Date.now().toString(36) + Math.random().toString(36).substr(2, 4),
             timestamp: new Date().toISOString(),
             location: locationText,
             lat: GPS.currentLocation ? GPS.currentLocation.lat : null,
             lng: GPS.currentLocation ? GPS.currentLocation.lng : null,
-            type: 'EMERGENCY'
+            type: 'EMERGENCY',
+            alertType: alertType || null,
+            alertTypeLabel: alertTypeLabel || null
         };
 
         this.entries.unshift(entry);
@@ -44,9 +41,6 @@ const History = {
         return entry;
     },
 
-    /**
-     * Add an incoming alert from another device/server
-     */
     addFromServer: function(alert) {
         const entry = {
             id: alert.id || Date.now().toString(36),
@@ -54,7 +48,9 @@ const History = {
             location: alert.location || 'Unknown location',
             lat: alert.lat || null,
             lng: alert.lng || null,
-            type: 'INCOMING'
+            type: 'INCOMING',
+            alertType: alert.alertType || null,
+            alertTypeLabel: alert.alertTypeLabel || null
         };
 
         // Avoid duplicates
@@ -71,9 +67,6 @@ const History = {
         return entry;
     },
 
-    /**
-     * Save to localStorage
-     */
     saveToStorage: function() {
         try {
             localStorage.setItem(this.storageKey, JSON.stringify(this.entries));
@@ -82,9 +75,6 @@ const History = {
         }
     },
 
-    /**
-     * Clear all history
-     */
     clear: function() {
         if (confirm('Delete all alert history?')) {
             this.entries = [];
@@ -93,9 +83,6 @@ const History = {
         }
     },
 
-    /**
-     * Update the display
-     */
     updateDisplay: function() {
         const list = document.getElementById('historyList');
         if (!list) return;
@@ -113,13 +100,25 @@ const History = {
             return;
         }
 
+        // Colour map for alert type badges in history
+        const typeColors = {
+            GBV: '#E24B4A',
+            CRIME: '#F59E0B'
+        };
+
         list.innerHTML = this.entries.slice(0, 10).map(item => {
             const time = new Date(item.timestamp).toLocaleString();
             const location = item.location || '📍 No GPS';
             const isIncoming = item.type === 'INCOMING';
             const mapLink = item.lat && item.lng ?
-                `<a href="https://www.google.com/maps?q=${item.lat},${item.lng}" target="_blank" style="color:#1D9E75;text-decoration:none;">🗺️</a>` :
+                `<a href="https://www.google.com/maps?q=${item.lat},${item.lng}" target="_blank" style="color:#1D9E75;text-decoration:none;margin-left:4px;">🗺️</a>` :
                 '';
+
+            const badgeColor = typeColors[item.alertType] || '#888';
+            const badgeLabel = item.alertTypeLabel || (isIncoming ? 'Incoming' : 'Emergency');
+            const badge = item.alertType
+                ? `<span style="display:inline-block;padding:2px 6px;border-radius:4px;background:${badgeColor}22;color:${badgeColor};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.3px;margin-bottom:2px;">${badgeLabel}</span>`
+                : `<span style="font-size:12px;color:#888;">${isIncoming ? 'Incoming Alert' : 'Emergency'}</span>`;
 
             return `
                 <div class="history-item">
@@ -131,8 +130,8 @@ const History = {
                         </svg>
                     </div>
                     <div class="history-body">
-                        <div class="h-type">${isIncoming ? 'Incoming Alert' : 'Emergency'}</div>
-                        <div class="h-location">${location} ${mapLink}</div>
+                        <div class="h-type">${badge}</div>
+                        <div class="h-location">${location}${mapLink}</div>
                     </div>
                     <span class="h-time">${time}</span>
                 </div>
@@ -140,25 +139,17 @@ const History = {
         }).join('');
     },
 
-    /**
-     * Get all entries
-     */
     getAll: function() {
         return this.entries;
     },
 
-    /**
-     * Get entry count
-     */
     count: function() {
         return this.entries.length;
     }
 };
 
-// Make globally available
 window.History = History;
 
-// Load history on startup
 document.addEventListener('DOMContentLoaded', function() {
     History.load();
 });
