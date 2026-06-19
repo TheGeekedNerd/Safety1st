@@ -126,8 +126,13 @@ const P2P = {
         switch (msg.type) {
             case 'peer-hello':
                 this.log('Peer hello from:', from);
-                if (!this.peerConnections.has(from)) {
+                // Only the peer with lexicographically smaller ID initiates
+                // This prevents both peers from creating duplicate connections
+                if (!this.peerConnections.has(from) && this.localId < from) {
+                    this.log('I have smaller ID, initiating offer to:', from);
                     this.sendOffer(from);
+                } else if (!this.peerConnections.has(from)) {
+                    this.log('I have larger ID, waiting for offer from:', from);
                 }
                 break;
 
@@ -156,7 +161,23 @@ const P2P = {
 
         const pc = new RTCPeerConnection({
             iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' }
+                { urls: 'stun:stun.l.google.com:19302' },
+                // Free public TURN relay for cross-network P2P
+                {
+                    urls: 'turn:openrelay.metered.ca:80',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                },
+                {
+                    urls: 'turn:openrelay.metered.ca:443',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                },
+                {
+                    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                }
             ]
         });
 
@@ -177,7 +198,7 @@ const P2P = {
             if (pc.connectionState === 'connected') {
                 this.connectedPeers.add(peerId);
                 this.updatePeerDisplay();
-            } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
                 this.cleanupPeer(peerId);
             }
         };
@@ -188,6 +209,13 @@ const P2P = {
 
         pc.oniceconnectionstatechange = () => {
             this.log(`Peer ${peerId} ICE connection state:`, pc.iceConnectionState);
+            // Also add to connectedPeers when ICE connects (faster than connectionState)
+            if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                if (!this.connectedPeers.has(peerId)) {
+                    this.connectedPeers.add(peerId);
+                    this.updatePeerDisplay();
+                }
+            }
         };
 
         pc.ondatachannel = (event) => {
@@ -262,6 +290,13 @@ const P2P = {
     },
 
     handleOffer: async function(peerId, sdp) {
+        // If we already have a connection to this peer, close it first
+        // This handles the race where both peers tried to initiate
+        if (this.peerConnections.has(peerId)) {
+            this.log('Already have connection to', peerId, 'closing old one before handling new offer');
+            this.cleanupPeer(peerId);
+        }
+
         const pc = this.createPeerConnection(peerId);
 
         try {
@@ -380,6 +415,8 @@ const P2P = {
                 } catch (e) {
                     console.error(`[P2P] ❌ Failed to send chat to ${peerId}:`, e);
                 }
+            } else {
+                this.log('⚠️ Chat channel not open for peer:', peerId, '— state:', channel.readyState);
             }
         });
 
