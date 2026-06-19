@@ -130,7 +130,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // ── Push subscription ────────────────────────────────────────────────────────
+  // ── Push subscription ──────────────────────────────────────────────────────
   if (req.url === '/subscribe' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => body += chunk);
@@ -234,15 +234,12 @@ const server = http.createServer((req, res) => {
   }
 
   // ── Static files ─────────────────────────────────────────────────────────────
-  // CRITICAL FIX: Properly resolve paths to the public directory
   let urlPath = req.url.split('?')[0];
 
-  // Remove leading slash for path.join
   if (urlPath.startsWith('/')) {
     urlPath = urlPath.slice(1);
   }
 
-  // Default to index.html for root
   if (urlPath === '') {
     urlPath = 'index.html';
   }
@@ -252,15 +249,11 @@ const server = http.createServer((req, res) => {
   const contentType = mimeTypes[ext] || 'application/octet-stream';
 
   console.log('[Server] Resolved path:', urlPath, '→', filePath);
-  console.log('[Server] __dirname:', __dirname);
-  console.log('[Server] File exists check:', fs.existsSync(filePath));
 
   fs.readFile(filePath, (err, content) => {
     if (err) {
       if (err.code === 'ENOENT') {
-        // Check if it's a route (no extension) → SPA fallback
         if (!ext || ext === '') {
-          console.log('[Server] SPA fallback for route:', req.url);
           const indexPath = path.join(__dirname, 'public', 'index.html');
           fs.readFile(indexPath, (err2, indexContent) => {
             if (err2) {
@@ -272,8 +265,6 @@ const server = http.createServer((req, res) => {
             }
           });
         } else {
-          // Real file missing → 404
-          console.log('[Server] 404 File not found:', filePath);
           res.writeHead(404, { 'Content-Type': 'text/plain' });
           res.end('404 Not Found: ' + req.url);
         }
@@ -283,7 +274,6 @@ const server = http.createServer((req, res) => {
         res.end('500 Server Error');
       }
     } else {
-      console.log('[Server] 200 OK:', req.url, '(' + content.length + ' bytes)');
       res.writeHead(200, { 'Content-Type': contentType });
       res.end(content);
     }
@@ -348,35 +338,21 @@ wss.on('connection', (ws) => {
 server.listen(PORT, () => {
   console.log(`[Server] Running on port ${PORT}`);
   console.log(`[Server] __dirname: ${__dirname}`);
-
-  // Check multiple possible public directory locations
-  const possiblePaths = [
-    path.join(__dirname, 'public'),
-    path.join(__dirname, '..', 'public'),
-    path.join(__dirname, '..', '..', 'public'),
-    '/opt/render/project/public',
-    '/opt/render/project/src/public',
-    path.join(process.cwd(), 'public')
-  ];
-
-  console.log('[Server] Checking possible public directories:');
-  let foundPublic = null;
-  for (const p of possiblePaths) {
-    const exists = fs.existsSync(p);
-    console.log(`  ${exists ? '✅' : '❌'} ${p}`);
-    if (exists && !foundPublic) {
-      foundPublic = p;
-    }
-  }
-
-  if (foundPublic) {
-    console.log(`[Server] Using public directory: ${foundPublic}`);
-  } else {
-    console.error('[Server] WARNING: No public directory found!');
-    console.error('[Server] Files will not be served. Check your deployment.');
-  }
-
-  console.log(`[Server] WebSocket signaling ready`);
-  console.log(`[Server] Push subscribers loaded: ${subscriptions.size}`);
   console.log(`[Server] Health: http://localhost:${PORT}/health`);
+});
+
+// ─── GRACEFUL SHUTDOWN ──────────────────────────────────────────────────────
+process.on('SIGTERM', () => {
+  console.log('[Server] SIGTERM received, shutting down gracefully...');
+  server.close(() => {
+    console.log('[Server] HTTP server closed');
+    wss.close(() => {
+      console.log('[Server] WebSocket server closed');
+      process.exit(0);
+    });
+  });
+  setTimeout(() => {
+    console.error('[Server] Forced shutdown');
+    process.exit(1);
+  }, 25000);
 });
