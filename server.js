@@ -7,24 +7,19 @@ const webpush = require('web-push');
 const PORT = process.env.PORT || 3000;
 
 // ─── VAPID ────────────────────────────────────────────────────────────────────
-// Run once to generate:  npx web-push generate-vapid-keys
-// Then set in .env / Render env vars.
 const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
 const VAPID_SUBJECT     = process.env.VAPID_SUBJECT || 'mailto:soundalert@example.com';
 
 if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
   console.error('[FATAL] VAPID keys missing. Run: npx web-push generate-vapid-keys');
-  console.error('        Then add VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to your .env');
   process.exit(1);
 }
 
 webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 // ─── PERSISTENT SUBSCRIPTIONS ─────────────────────────────────────────────────
-// Survives server restarts. Use a real DB (Mongo/Redis) for production.
 const SUBS_FILE = path.join(__dirname, 'subscriptions.json');
-
 let subscriptions = new Set();
 
 function loadSubs() {
@@ -63,13 +58,6 @@ const mimeTypes = {
   '.webmanifest': 'application/manifest+json'
 };
 
-// Ensure icon files are served from public directory
-const STATIC_FILES = [
-  'icon-192.png',
-  'icon-512.png', 
-  'badge-72.png'
-];
-
 // ─── HTTP SERVER ──────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -82,6 +70,8 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  console.log('[Server] Request:', req.method, req.url);
+
   // ── Health check ────────────────────────────────────────────────────────────
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -93,7 +83,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // ── Debug: list all subscribers (no sensitive keys) ───────────────────────────
+  // ── Debug: list all subscribers ────────────────────────────────────────────
   if (req.url === '/debug-subs') {
     const subs = [...subscriptions].map((subStr, idx) => {
       const sub = JSON.parse(subStr);
@@ -106,14 +96,11 @@ const server = http.createServer((req, res) => {
       };
     });
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      total: subscriptions.size,
-      subscribers: subs
-    }));
+    res.end(JSON.stringify({ total: subscriptions.size, subscribers: subs }));
     return;
   }
 
-  // ── VAPID public key (needed by client to subscribe) ────────────────────────
+  // ── VAPID public key ────────────────────────────────────────────────────────
   if (req.url === '/vapid-public-key') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ publicKey: VAPID_PUBLIC_KEY }));
@@ -127,8 +114,6 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const subscription = JSON.parse(body);
-
-        // Basic validation
         if (!subscription.endpoint || !subscription.keys) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Invalid subscription object' }));
@@ -140,13 +125,7 @@ const server = http.createServer((req, res) => {
         subscriptions.add(subStr);
         if (isNew) saveSubs();
 
-        // Log device details for debugging
-        const endpoint = subscription.endpoint || 'unknown';
-        const userAgent = req.headers['user-agent'] || 'unknown';
-        console.log(`[Push] ${isNew ? 'New' : 'Re-registered'} subscriber.`);
-        console.log(`[Push]   Endpoint: ${endpoint.substring(0, 60)}...`);
-        console.log(`[Push]   Device: ${userAgent.substring(0, 80)}`);
-        console.log(`[Push]   Total subscribers: ${subscriptions.size}`);
+        console.log(`[Push] ${isNew ? 'New' : 'Re-registered'} subscriber. Total: ${subscriptions.size}`);
         res.writeHead(201, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, total: subscriptions.size }));
       } catch (e) {
@@ -158,15 +137,14 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // ── Broadcast emergency to all push subscribers ──────────────────────────────
+  // ── Broadcast emergency ──────────────────────────────────────────────────────
   if (req.url === '/broadcast' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
         const alert = JSON.parse(body);
-        console.log(`[Push] Broadcasting to ${subscriptions.size} subscribers. Type: ${alert.alertType}`);
-        console.log(`[Push] Alert data:`, JSON.stringify(alert).substring(0, 200));
+        console.log(`[Push] Broadcasting to ${subscriptions.size} subscribers`);
 
         const typeLabel  = alert.alertTypeLabel || 'EMERGENCY';
         const notifTitle = `🚨 ${typeLabel.toUpperCase()} ALERT!`;
@@ -202,17 +180,11 @@ const server = http.createServer((req, res) => {
           }
         });
 
-        const deadSubs  = [];
-        const sentTo    = [];
-        const promises  = [...subscriptions].map((subStr, idx) => {
+        const deadSubs = [];
+        const promises = [...subscriptions].map(subStr => {
           const sub = JSON.parse(subStr);
-          const endpointPreview = sub.endpoint ? sub.endpoint.substring(0, 40) : 'unknown';
-          return webpush.sendNotification(sub, payload).then(() => {
-            sentTo.push(endpointPreview);
-            console.log(`[Push] ✅ Sent to subscriber ${idx + 1}: ${endpointPreview}...`);
-          }).catch(err => {
-            console.error(`[Push] ❌ Send failed to ${endpointPreview}:`, err.statusCode, err.message);
-            // 410 Gone / 404 Not Found = subscription is expired, remove it
+          return webpush.sendNotification(sub, payload).catch(err => {
+            console.error('[Push] Send failed:', err.statusCode, err.message);
             if (err.statusCode === 410 || err.statusCode === 404) {
               deadSubs.push(subStr);
             }
@@ -239,29 +211,33 @@ const server = http.createServer((req, res) => {
   }
 
   // ── Static files ─────────────────────────────────────────────────────────────
-  let filePath = req.url === '/' ? 'index.html' : req.url.split('?')[0];
-  // Strip leading slash so path.join works correctly
-  if (filePath.startsWith('/')) filePath = filePath.slice(1);
-  filePath = path.join(__dirname, 'public', filePath);
+  // CRITICAL FIX: Properly resolve paths to the public directory
+  let urlPath = req.url.split('?')[0];
 
-  const ext         = path.extname(filePath).toLowerCase();
+  // Remove leading slash for path.join
+  if (urlPath.startsWith('/')) {
+    urlPath = urlPath.slice(1);
+  }
+
+  // Default to index.html for root
+  if (urlPath === '') {
+    urlPath = 'index.html';
+  }
+
+  const filePath = path.join(__dirname, 'public', urlPath);
+  const ext = path.extname(filePath).toLowerCase();
   const contentType = mimeTypes[ext] || 'application/octet-stream';
 
-  // Debug: log icon file requests
-  if (ext === '.png' || ext === '.svg' || ext === '.ico') {
-    console.log('[Server] Serving asset:', req.url, '→', filePath);
-  }
+  console.log('[Server] Resolved path:', urlPath, '→', filePath);
+  console.log('[Server] __dirname:', __dirname);
+  console.log('[Server] File exists check:', fs.existsSync(filePath));
 
   fs.readFile(filePath, (err, content) => {
     if (err) {
       if (err.code === 'ENOENT') {
-        // FIX: Root path / and route-like requests (no extension) → SPA fallback
-        // Actual files (.png, .js, .css) that are missing → 404
-        const isRootPath = req.url === '/' || req.url === '';
-        const isRoute = !ext || ext === ''; // no file extension = route
-
-        if (isRootPath || isRoute) {
-          // SPA fallback
+        // Check if it's a route (no extension) → SPA fallback
+        if (!ext || ext === '') {
+          console.log('[Server] SPA fallback for route:', req.url);
           const indexPath = path.join(__dirname, 'public', 'index.html');
           fs.readFile(indexPath, (err2, indexContent) => {
             if (err2) {
@@ -273,30 +249,26 @@ const server = http.createServer((req, res) => {
             }
           });
         } else {
-          // Real file request that failed — return 404
-          console.log('[Server] 404 Not Found:', req.url, '→', filePath);
+          // Real file missing → 404
+          console.log('[Server] 404 File not found:', filePath);
           res.writeHead(404, { 'Content-Type': 'text/plain' });
           res.end('404 Not Found: ' + req.url);
         }
       } else {
+        console.error('[Server] Error reading file:', err);
         res.writeHead(500, { 'Content-Type': 'text/plain' });
         res.end('500 Server Error');
       }
     } else {
+      console.log('[Server] 200 OK:', req.url, '(' + content.length + ' bytes)');
       res.writeHead(200, { 'Content-Type': contentType });
       res.end(content);
     }
   });
 });
 
-// ─── WEBSOCKET — P2P SIGNALING ────────────────────────────────────────────────
-// FIX 1: Don't overwrite the client's own `from` field.
-// FIX 2: Route targeted messages (offer/answer/ice) only to their intended peer.
-// FIX 3: Track peerId → ws so targeted delivery is O(1) not O(n).
-
+// ─── WEBSOCKET ────────────────────────────────────────────────────────────────
 const wss = new WebSocket.Server({ server });
-
-// Map of peerId (string) → WebSocket
 const peerMap = new Map();
 
 wss.on('connection', (ws) => {
@@ -311,7 +283,6 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    // Register peerId when we first hear from this client
     if (data.from && !ws.peerId) {
       ws.peerId = data.from;
       peerMap.set(data.from, ws);
@@ -321,7 +292,6 @@ wss.on('connection', (ws) => {
     const msgStr = rawMessage.toString();
 
     if (data.to) {
-      // ── Targeted message (offer / answer / ice-candidate) ──────────────────
       const targetWs = peerMap.get(data.to);
       if (targetWs && targetWs.readyState === WebSocket.OPEN) {
         targetWs.send(msgStr);
@@ -329,7 +299,6 @@ wss.on('connection', (ws) => {
         console.warn(`[WS] Target peer not found or closed: ${data.to}`);
       }
     } else {
-      // ── Broadcast message (peer-hello) ─────────────────────────────────────
       wss.clients.forEach(client => {
         if (client !== ws && client.readyState === WebSocket.OPEN) {
           client.send(msgStr);
@@ -355,6 +324,8 @@ wss.on('connection', (ws) => {
 // ─── START ────────────────────────────────────────────────────────────────────
 server.listen(PORT, () => {
   console.log(`[Server] Running on port ${PORT}`);
+  console.log(`[Server] __dirname: ${__dirname}`);
+  console.log(`[Server] public path: ${path.join(__dirname, 'public')}`);
   console.log(`[Server] WebSocket signaling ready`);
   console.log(`[Server] Push subscribers loaded: ${subscriptions.size}`);
   console.log(`[Server] Health: http://localhost:${PORT}/health`);
