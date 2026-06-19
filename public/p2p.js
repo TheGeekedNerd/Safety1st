@@ -67,16 +67,22 @@ const P2P = {
 
         this.log('Connecting to signaling:', wsUrl);
 
+        // Close existing socket if any
+        if (this.signalingSocket) {
+            try { this.signalingSocket.close(); } catch(e) {}
+            this.signalingSocket = null;
+        }
+
         try {
             this.signalingSocket = new WebSocket(wsUrl);
 
             this.signalingSocket.onopen = () => {
-                this.log('Signaling connected');
+                this.log('✅ Signaling connected');
                 this.updateConnectionStatus('connected');
                 // Announce ourselves to all existing peers
                 setTimeout(() => {
                     this.sendSignal({ type: 'peer-hello', from: this.localId });
-                }, 500);
+                }, 300);
             };
 
             this.signalingSocket.onmessage = (event) => {
@@ -90,9 +96,10 @@ const P2P = {
             };
 
             this.signalingSocket.onclose = () => {
-                this.log('Signaling disconnected, reconnecting in 3s...');
+                this.log('Signaling disconnected, reconnecting in 2s...');
                 this.updateConnectionStatus('disconnected');
-                setTimeout(() => this.connectSignaling(), 3000);
+                this.signalingSocket = null;
+                setTimeout(() => this.connectSignaling(), 2000);
             };
 
             this.signalingSocket.onerror = (err) => {
@@ -102,6 +109,8 @@ const P2P = {
 
         } catch (e) {
             console.error('[P2P] Failed to connect:', e);
+            this.updateConnectionStatus('error');
+            setTimeout(() => this.connectSignaling(), 2000);
         }
     },
 
@@ -157,24 +166,14 @@ const P2P = {
 
         const pc = new RTCPeerConnection({
             iceServers: [
-                // STUN servers for direct P2P
-                { urls: 'stun:stun.l.google.com:19302'  },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' },
-                // TURN servers for NAT traversal fallback (mobile carriers, corporate firewalls)
-                // Free relay from Open Relay Project — replace with your own for production
+                // One STUN server is enough for most cases
+                { urls: 'stun:stun.l.google.com:19302' },
+                // One TURN server with TCP fallback for NAT traversal
                 {
-                    urls: 'turn:openrelay.metered.ca:80',
-                    username: 'openrelayproject',
-                    credential: 'openrelayproject'
-                },
-                {
-                    urls: 'turn:openrelay.metered.ca:443',
-                    username: 'openrelayproject',
-                    credential: 'openrelayproject'
-                },
-                {
-                    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+                    urls: [
+                        'turn:openrelay.metered.ca:443',
+                        'turn:openrelay.metered.ca:443?transport=tcp'
+                    ],
                     username: 'openrelayproject',
                     credential: 'openrelayproject'
                 }
