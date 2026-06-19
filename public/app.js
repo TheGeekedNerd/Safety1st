@@ -161,11 +161,38 @@ const App = {
         console.log('[App] Notification permission:', Notification.permission);
 
         if (Notification.permission === 'default') {
-            const result = await Notification.requestPermission();
-            console.log('[App] Permission result:', result);
+            // Don't auto-request — wait for user gesture
+            console.log('[App] Notification permission not decided yet');
+            this.showPermissionButton();
         } else if (Notification.permission === 'denied') {
             console.warn('[App] Notifications blocked by user');
+            this.showPermissionButton();
+        } else if (Notification.permission === 'granted') {
+            console.log('[App] Notifications already granted');
         }
+    },
+
+    showPermissionButton: function() {
+        if (document.getElementById('permBtn')) return;
+
+        const btn = document.createElement('button');
+        btn.id = 'permBtn';
+        btn.textContent = '🔔 Enable Notifications';
+        btn.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;background:#E24B4A;color:white;border:none;padding:10px 16px;border-radius:8px;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+        btn.onclick = async () => {
+            const result = await Notification.requestPermission();
+            console.log('[App] Permission result:', result);
+            if (result === 'granted') {
+                btn.remove();
+                // Re-run push subscription now that we have permission
+                const reg = await navigator.serviceWorker.ready;
+                await this.subscribeToPush(reg);
+            } else {
+                btn.textContent = '❌ Notifications Blocked';
+                btn.style.background = '#666';
+            }
+        };
+        document.body.appendChild(btn);
     },
 
     setupInstallPrompt: function() {

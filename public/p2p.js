@@ -166,17 +166,9 @@ const P2P = {
 
         const pc = new RTCPeerConnection({
             iceServers: [
-                // One STUN server is enough for most cases
-                { urls: 'stun:stun.l.google.com:19302' },
-                // One TURN server with TCP fallback for NAT traversal
-                {
-                    urls: [
-                        'turn:openrelay.metered.ca:443',
-                        'turn:openrelay.metered.ca:443?transport=tcp'
-                    ],
-                    username: 'openrelayproject',
-                    credential: 'openrelayproject'
-                }
+                // STUN only for now — TURN servers are unreliable on free tiers
+                // For cross-network P2P, you need a paid TURN service (Twilio, Xirsys, etc.)
+                { urls: 'stun:stun.l.google.com:19302' }
             ]
         });
 
