@@ -100,6 +100,28 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ── Debug: list files on disk ─────────────────────────────────────────────
+  if (req.url === '/debug-files') {
+    const publicDir = path.join(__dirname, 'public');
+    let files = [];
+    try {
+      files = fs.readdirSync(publicDir);
+    } catch (e) {
+      files = ['ERROR: ' + e.message];
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      __dirname: __dirname,
+      publicDir: publicDir,
+      publicDirExists: fs.existsSync(publicDir),
+      filesInPublic: files,
+      indexHtmlExists: fs.existsSync(path.join(publicDir, 'index.html')),
+      icon192Exists: fs.existsSync(path.join(publicDir, 'icon-192.png'))
+    }));
+    return;
+  }
+
   // ── VAPID public key ────────────────────────────────────────────────────────
   if (req.url === '/vapid-public-key') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -325,7 +347,34 @@ wss.on('connection', (ws) => {
 server.listen(PORT, () => {
   console.log(`[Server] Running on port ${PORT}`);
   console.log(`[Server] __dirname: ${__dirname}`);
-  console.log(`[Server] public path: ${path.join(__dirname, 'public')}`);
+
+  // Check multiple possible public directory locations
+  const possiblePaths = [
+    path.join(__dirname, 'public'),
+    path.join(__dirname, '..', 'public'),
+    path.join(__dirname, '..', '..', 'public'),
+    '/opt/render/project/public',
+    '/opt/render/project/src/public',
+    path.join(process.cwd(), 'public')
+  ];
+
+  console.log('[Server] Checking possible public directories:');
+  let foundPublic = null;
+  for (const p of possiblePaths) {
+    const exists = fs.existsSync(p);
+    console.log(`  ${exists ? '✅' : '❌'} ${p}`);
+    if (exists && !foundPublic) {
+      foundPublic = p;
+    }
+  }
+
+  if (foundPublic) {
+    console.log(`[Server] Using public directory: ${foundPublic}`);
+  } else {
+    console.error('[Server] WARNING: No public directory found!');
+    console.error('[Server] Files will not be served. Check your deployment.');
+  }
+
   console.log(`[Server] WebSocket signaling ready`);
   console.log(`[Server] Push subscribers loaded: ${subscriptions.size}`);
   console.log(`[Server] Health: http://localhost:${PORT}/health`);
