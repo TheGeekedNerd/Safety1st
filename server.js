@@ -239,7 +239,9 @@ const server = http.createServer((req, res) => {
   }
 
   // ── Static files ─────────────────────────────────────────────────────────────
-  let filePath = req.url === '/' ? '/index.html' : req.url.split('?')[0];
+  let filePath = req.url === '/' ? 'index.html' : req.url.split('?')[0];
+  // Strip leading slash so path.join works correctly
+  if (filePath.startsWith('/')) filePath = filePath.slice(1);
   filePath = path.join(__dirname, 'public', filePath);
 
   const ext         = path.extname(filePath).toLowerCase();
@@ -253,14 +255,13 @@ const server = http.createServer((req, res) => {
   fs.readFile(filePath, (err, content) => {
     if (err) {
       if (err.code === 'ENOENT') {
-        // Only do SPA fallback for routes (no file extension), not for actual files
-        if (ext) {
-          // This was a real file request that failed — return 404
-          console.log('[Server] 404 Not Found:', req.url, '→', filePath);
-          res.writeHead(404, { 'Content-Type': 'text/plain' });
-          res.end('404 Not Found: ' + req.url);
-        } else {
-          // SPA fallback for route-like requests (no extension)
+        // FIX: Root path / and route-like requests (no extension) → SPA fallback
+        // Actual files (.png, .js, .css) that are missing → 404
+        const isRootPath = req.url === '/' || req.url === '';
+        const isRoute = !ext || ext === ''; // no file extension = route
+
+        if (isRootPath || isRoute) {
+          // SPA fallback
           const indexPath = path.join(__dirname, 'public', 'index.html');
           fs.readFile(indexPath, (err2, indexContent) => {
             if (err2) {
@@ -271,6 +272,11 @@ const server = http.createServer((req, res) => {
               res.end(indexContent);
             }
           });
+        } else {
+          // Real file request that failed — return 404
+          console.log('[Server] 404 Not Found:', req.url, '→', filePath);
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('404 Not Found: ' + req.url);
         }
       } else {
         res.writeHead(500, { 'Content-Type': 'text/plain' });
