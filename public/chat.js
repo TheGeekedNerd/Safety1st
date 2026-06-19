@@ -1,36 +1,42 @@
 /* ========================================
-   CHAT MODULE - P2P Peer Messaging
+   CHAT MODULE - P2P Short Messages
    ======================================== */
 
 const Chat = {
+    messages: [],
+    maxMessages: 50,
+    maxLength: 120,
 
     init: function() {
-        const input = document.getElementById('chatInput');
-        if (input) {
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') Chat.send();
-            });
-        }
+        this.bindInput();
+        this.updateBadge();
     },
 
-    // Called by P2P when peer count changes
-    onPeerCountChange: function(count) {
-        const badge       = document.getElementById('chatBadge');
-        const inputRow    = document.getElementById('chatInputRow');
-        const chatEmpty   = document.getElementById('chatEmpty');
-        const chatMessages = document.getElementById('chatMessages');
+    bindInput: function() {
+        const input = document.getElementById('chatInput');
+        if (!input) return;
 
-        if (count > 0) {
-            if (badge)        { badge.textContent = '● ON'; badge.style.color = 'var(--green, #4ade80)'; }
-            if (inputRow)     inputRow.removeAttribute('hidden');
-            if (chatEmpty)    chatEmpty.setAttribute('hidden', '');
-            if (chatMessages) chatMessages.removeAttribute('hidden');
-        } else {
-            if (badge)        { badge.textContent = '● OFF'; badge.style.color = ''; }
-            if (inputRow)     inputRow.setAttribute('hidden', '');
-            if (chatEmpty)    chatEmpty.removeAttribute('hidden');
-            if (chatMessages) chatMessages.setAttribute('hidden', '');
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.send();
+            }
+        });
+    },
+
+    // Check if we have any data channels at all (connecting or open)
+    hasAnyChannels: function() {
+        if (!window.P2P) return false;
+        return P2P.dataChannels && P2P.dataChannels.size > 0;
+    },
+
+    // Check if at least one channel is actually open
+    hasOpenChannels: function() {
+        if (!window.P2P || !P2P.dataChannels) return false;
+        for (const [peerId, channel] of P2P.dataChannels) {
+            if (channel.readyState === 'open') return true;
         }
+        return false;
     },
 
     send: function() {
@@ -40,78 +46,131 @@ const Chat = {
         const text = input.value.trim();
         if (!text) return;
 
-        if (P2P.connectedPeers.size === 0) {
-            this._showToast('No peers connected');
+        if (text.length > this.maxLength) {
+            alert(`Message too long (max ${this.maxLength} chars)`);
             return;
         }
 
         const chatData = {
-            text:      text,
-            from:      P2P.localId,
-            timestamp: Date.now()
+            text: text,
+            from: 'User ' + (P2P ? P2P.localId.substr(-4).toUpperCase() : 'YOU'),
+            fromId: P2P ? P2P.localId : 'self',
+            time: Date.now()
         };
 
-        P2P.broadcastChat(chatData);
-        this._renderMessage(chatData, true);
+        // Always try to broadcast — P2P.broadcastChat handles "no open channels" gracefully
+        if (window.P2P && P2P.broadcastChat) {
+            const sent = P2P.broadcastChat(chatData);
+            if (sent === 0 && this.hasAnyChannels()) {
+                // Channels exist but not open yet — show a subtle hint
+                this.renderSystemMessage('Message queued — waiting for peer to connect...');
+            }
+        }
 
+        // Always show locally
+        this.renderMessage({ ...chatData, own: true });
         input.value = '';
-        input.focus();
+        this.updateBadge();
     },
 
-    receive: function(chatData, fromPeerId) {
-        this._renderMessage(chatData, false);
-        this._flashBadge();
+    receive: function(data, fromPeerId) {
+        this.renderMessage({
+            text: data.text,
+            from: data.from || `User ${fromPeerId.substr(-4).toUpperCase()}`,
+            fromId: fromPeerId,
+            time: data.time || Date.now(),
+            own: false
+        });
     },
 
-    _renderMessage: function(chatData, isSelf) {
+    renderMessage: function(msg) {
         const container = document.getElementById('chatMessages');
+        const empty = document.getElementById('chatEmpty');
         if (!container) return;
 
-        const time = new Date(chatData.timestamp).toLocaleTimeString([], {
-            hour:   '2-digit',
-            minute: '2-digit'
-        });
+        if (empty) empty.hidden = true;
+        container.hidden = false;
 
-        const label = isSelf
-            ? 'You'
-            : `User ${chatData.from.substr(-4).toUpperCase()}`;
+        const el = document.createElement('div');
+        el.className = `chat-msg ${msg.own ? 'own' : 'peer'}`;
 
-        const div = document.createElement('div');
-        div.className = `chat-msg ${isSelf ? 'chat-msg--self' : 'chat-msg--peer'}`;
-        div.innerHTML = `
-            <span class="chat-msg-meta">${label} · ${time}</span>
-            <span class="chat-msg-text">${this._escape(chatData.text)}</span>
+        const timeStr = new Date(msg.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        el.innerHTML = `
+            <div class="chat-msg-head">
+                <span>${msg.own ? 'You' : msg.from}</span>
+                <span>${timeStr}</span>
+            </div>
+            <div class="chat-msg-body">${this.escapeHtml(msg.text)}</div>
         `;
 
-        container.appendChild(div);
+        container.appendChild(el);
+        container.scrollTop = container.scrollHeight;
+
+        this.messages.push(msg);
+        if (this.messages.length > this.maxMessages) {
+            this.messages.shift();
+            if (container.children.length > this.maxMessages) {
+                container.removeChild(container.firstChild);
+            }
+        }
+    },
+
+    renderSystemMessage: function(text) {
+        const container = document.getElementById('chatMessages');
+        const empty = document.getElementById('chatEmpty');
+        if (!container) return;
+
+        if (empty) empty.hidden = true;
+        container.hidden = false;
+
+        const el = document.createElement('div');
+        el.className = 'chat-msg system';
+        el.style.cssText = 'align-self:center;background:var(--bg);border:0.5px dashed var(--border-md);color:var(--text-muted);font-size:11px;font-style:italic;padding:4px 10px;';
+        el.textContent = text;
+
+        container.appendChild(el);
         container.scrollTop = container.scrollHeight;
     },
 
-    _escape: function(str) {
-        return str
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
+    escapeHtml: function(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     },
 
-    _flashBadge: function() {
+    updateBadge: function() {
         const badge = document.getElementById('chatBadge');
-        if (!badge) return;
-        badge.style.color = '#facc15';
-        setTimeout(() => { badge.style.color = 'var(--green, #4ade80)'; }, 800);
-    },
+        const inputRow = document.getElementById('chatInputRow');
 
-    _showToast: function(msg) {
-        const t = document.createElement('div');
-        t.textContent = msg;
-        t.style.cssText = `
-            position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
-            background:#333;color:#fff;padding:8px 16px;border-radius:8px;
-            font-size:13px;z-index:9999;pointer-events:none;
-        `;
-        document.body.appendChild(t);
-        setTimeout(() => t.remove(), 2000);
+        if (!badge) return;
+
+        const peerCount = window.P2P ? P2P.getPeerCount() : 0;
+        const hasChannels = this.hasAnyChannels();
+        const hasOpen = this.hasOpenChannels();
+
+        // Enable chat input if we have ANY channels (connecting or open)
+        // OR if we've ever had a peer connection attempt (signaling connected)
+        const signalingConnected = window.P2P && P2P.signalingSocket && P2P.signalingSocket.readyState === WebSocket.OPEN;
+        const shouldEnable = hasChannels || (signalingConnected && peerCount > 0);
+
+        if (hasOpen) {
+            badge.textContent = `● ${peerCount} PEER${peerCount > 1 ? 'S' : ''}`;
+            badge.style.color = 'var(--green)';
+        } else if (hasChannels) {
+            badge.textContent = `● CONNECTING...`;
+            badge.style.color = 'var(--text-secondary)';
+        } else if (signalingConnected) {
+            badge.textContent = `● ONLINE`;
+            badge.style.color = 'var(--text-secondary)';
+        } else {
+            badge.textContent = '● OFF';
+            badge.style.color = 'var(--text-muted)';
+        }
+
+        if (inputRow) {
+            inputRow.hidden = !shouldEnable;
+        }
     }
 };
 
@@ -120,3 +179,8 @@ window.Chat = Chat;
 document.addEventListener('DOMContentLoaded', () => {
     Chat.init();
 });
+
+// Keep badge in sync with peer connections
+setInterval(() => {
+    Chat.updateBadge();
+}, 1000);
