@@ -242,28 +242,36 @@ const server = http.createServer((req, res) => {
   let filePath = req.url === '/' ? '/index.html' : req.url.split('?')[0];
   filePath = path.join(__dirname, 'public', filePath);
 
-  // Debug: log icon file requests
-  if (filePath.includes('icon-') || filePath.includes('badge-')) {
-    console.log('[Server] Serving icon:', req.url, '→', filePath);
-  }
-
   const ext         = path.extname(filePath).toLowerCase();
   const contentType = mimeTypes[ext] || 'application/octet-stream';
+
+  // Debug: log icon file requests
+  if (ext === '.png' || ext === '.svg' || ext === '.ico') {
+    console.log('[Server] Serving asset:', req.url, '→', filePath);
+  }
 
   fs.readFile(filePath, (err, content) => {
     if (err) {
       if (err.code === 'ENOENT') {
-        // SPA fallback
-        const indexPath = path.join(__dirname, 'public', 'index.html');
-        fs.readFile(indexPath, (err2, indexContent) => {
-          if (err2) {
-            res.writeHead(404, { 'Content-Type': 'text/plain' });
-            res.end('404 Not Found');
-          } else {
-            res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end(indexContent);
-          }
-        });
+        // Only do SPA fallback for routes (no file extension), not for actual files
+        if (ext) {
+          // This was a real file request that failed — return 404
+          console.log('[Server] 404 Not Found:', req.url, '→', filePath);
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('404 Not Found: ' + req.url);
+        } else {
+          // SPA fallback for route-like requests (no extension)
+          const indexPath = path.join(__dirname, 'public', 'index.html');
+          fs.readFile(indexPath, (err2, indexContent) => {
+            if (err2) {
+              res.writeHead(404, { 'Content-Type': 'text/plain' });
+              res.end('404 Not Found');
+            } else {
+              res.writeHead(200, { 'Content-Type': 'text/html' });
+              res.end(indexContent);
+            }
+          });
+        }
       } else {
         res.writeHead(500, { 'Content-Type': 'text/plain' });
         res.end('500 Server Error');
