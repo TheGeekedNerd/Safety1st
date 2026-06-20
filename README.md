@@ -8,7 +8,7 @@ A one-tap emergency alert system that works **offline** and **peer-to-peer**. Bu
 
 SoundAlert was built as a solution to one of the G13 challenges at the **Youth Tech Expo G13 Hackathon**, held on **18–19 June 2026** as part of the Gauteng Department of e-Government's province-wide Youth Tech Expo G13 Hackathon Series 2026. The series brings together young innovators, government institutions, and industry partners to build practical digital solutions for Gauteng's priority service delivery challenges, aligned with the G13 priorities of the 7th Administration. SoundAlert addresses community safety, specifically rapid, peer-to-peer emergency response for GBV and crime incidents in areas where connectivity can't be relied on.
 
-🥉 **Placed 4th out of 17 teams** at the hackathon.
+🥉 **Placed 4th out of 17 teams** at the hackathon which was held at YCWA in Soweto on the 18th and 19th of June 2026.
 
 ---
 
