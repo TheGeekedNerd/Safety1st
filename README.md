@@ -1,6 +1,6 @@
 # 🚨 SoundAlert — Emergency Alert System
 
-A one-tap emergency alert system that works **offline** and **peer-to-peer**. Built for safety at events, campuses, and communities.
+A one-tap emergency alert system that works partially **offline** and **peer-to-peer**. Built for safety at events, campuses, and communities.
 
 ---
 
