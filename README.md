@@ -1,6 +1,12 @@
-# 🚨 SoundAlert — Emergency Alert System
+# 🚨 SoundAlert/Safety1st — Emergency Alert System
 
 A one-tap emergency alert system that works **offline** and **peer-to-peer**. Built for safety at events, campuses, and communities.
+
+---
+
+## 🏆 About This Project
+
+SoundAlert/Safety1st was built as a solution to one of the G13 challenges at the **Youth Tech Expo G13 Hackathon**, held on **18–19 June 2026** as part of the Gauteng Department of e-Government's province-wide Youth Tech Expo G13 Hackathon Series 2026. The series brings together young innovators, government institutions, and industry partners to build practical digital solutions for Gauteng's priority service delivery challenges, aligned with the G13 priorities of the 7th Administration. SoundAlert addresses community safety, specifically rapid, peer-to-peer emergency response for GBV and crime incidents in areas where connectivity can't be relied on.
 
 ---
 
@@ -59,7 +65,7 @@ Safety1st/
 │   ├── history.js              # Alert history
 │   ├── sonic.js                # Ultrasonic tone detection
 │   ├── nearby.js               # Nearby device list
-│   ├── config.js               # App configuration
+│   ├── config.js                # App configuration
 │   ├── sw.js                   # Service Worker
 │   ├── webmanifest.json        # PWA manifest
 │   └── emergency_alarm.mp3     # Alarm sound asset
