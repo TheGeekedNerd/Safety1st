@@ -1,14 +1,39 @@
-# 🚨 SoundAlert — Emergency Alert System
+# 🚨 SoundAlert — Offline-Resilient Emergency Alert System
 
-A one-tap emergency alert system that works partially **offline** and **peer-to-peer**. Built for safety at events, campuses, and communities.
+A one-tap emergency alert system designed to keep working when the network doesn't. Built for community safety in areas where internet, cell data, and signal coverage can't be relied on.
 
 ---
 
 ## 🏆 About This Project
 
-SoundAlert was built as a solution to one of the G13 challenges at the **Youth Tech Expo G13 Hackathon**, held on **18–19 June 2026** as part of the Gauteng Department of e-Government's province-wide Youth Tech Expo G13 Hackathon Series 2026. The series brings together young innovators, government institutions, and industry partners to build practical digital solutions for Gauteng's priority service delivery challenges, aligned with the G13 priorities of the 7th Administration. SoundAlert addresses community safety, specifically rapid, peer-to-peer emergency response for GBV and crime incidents in areas where connectivity can't be relied on.
+SoundAlert was built for the **Youth Tech Expo G13 Hackathon** (18–19 June 2026), part of the Gauteng Department of e-Government's province-wide Youth Tech Expo G13 Hackathon Series — a series tackling Gauteng's priority service-delivery challenges under the G13 priorities of the 7th Administration. SoundAlert addresses community safety: fast, multi-channel emergency response for GBV and crime incidents in areas where you can't assume connectivity.
 
-🥉 **Placed 4th out of 17 teams** at the hackathon which was held at YCWA in Soweto on the 18th and 19th of June 2026.
+🥉 **Placed 4th out of 17 teams** at the Soweto leg, held at YCWA on 18–19 June 2026.
+
+Since the hackathon, the project has been extended well past the original weekend build — most of what's below didn't exist at expo time and was added afterward as a personal/portfolio project.
+
+---
+
+## ⚙️ How an alert actually gets out
+
+Most emergency apps assume you have a stable connection. SoundAlert doesn't make that assumption — every alert tries multiple channels, some at the same time, some as fallbacks if earlier ones fail.
+
+**Fired immediately, in parallel, regardless of connection:**
+- **WebRTC P2P broadcast** — direct peer-to-peer alert via `RTCDataChannel`, signaled over WebSocket, with STUN/TURN for cross-network NAT traversal
+- **Ultrasonic sound broadcast** — alert data encoded as a sequence of tones in the 18–20kHz range and played through the device speaker; any nearby phone with the app open and listening can decode it through its microphone, no Bluetooth or WiFi required
+
+**Then, in order, as a fallback chain:**
+
+| Tier | Condition | Mechanism |
+|------|-----------|-----------|
+| 1 | Full internet | Push broadcast via the server's `/broadcast` endpoint → Web Push to all subscribed devices |
+| 2 | Offline / unstable | Alert queued in IndexedDB, retried automatically on reconnect or via Background Sync |
+| 3 | Cell signal, no data | SMS sent to trusted contacts via Twilio (works on the cheapest plans, no data required) |
+| 4 | No signal, devices nearby | BLE relay — receive-side is live (Web Bluetooth GATT), hopping packet-to-packet between phones until one reaches signal and relays it to the backend |
+
+Tier 3 is attempted on every alert regardless of whether Tier 1 succeeded — it's not a last resort, it's a parallel guarantee that trusted contacts get reached even if the push broadcast already went out.
+
+**Tier 4 honesty note:** browsers can *scan/receive* BLE advertisements but cannot *advertise* them — that's a platform limitation, not an implementation gap. So the receive-and-relay half of the mesh is fully working in the PWA; broadcasting from a phone with zero signal needs a native wrapper (Capacitor + a BLE plugin, or an SDK like Bridgefy) and is the one piece intentionally left as a stub (`Mesh.noteSend`) until that native layer exists.
 
 ---
 
@@ -16,14 +41,37 @@ SoundAlert was built as a solution to one of the G13 challenges at the **Youth T
 
 | Feature | Description |
 |---------|-------------|
-| 🔴 **One-Tap Emergency** | Trigger GBV or Crime alerts instantly |
-| 📡 **P2P Alerts** | WebRTC peer-to-peer broadcasts to nearby devices |
-| 🔊 **Sonic Alerts** | Ultrasonic tone detection for silent triggering |
-| 📲 **Push Notifications** | Web Push alerts even when the app is closed |
-| 📍 **GPS Location** | Attach coordinates to every alert |
-| 💬 **Team Chat** | Real-time messaging with connected peers |
-| 📶 **Offline-First** | PWA works without internet once installed |
-| 🔔 **Auto-Retry** | Queues failed alerts and retries when peers reconnect |
+| 🔴 One-tap emergency | GBV/Femicide and Crime/Lawlessness alert types, triggered instantly |
+| 📡 WebRTC P2P | Direct peer-to-peer alert + chat over `RTCDataChannel`, with a self-built WebSocket signaling layer |
+| 🔊 Sonic alerts | Ultrasonic tone encoding/decoding for silent, infrastructure-free signaling |
+| 📲 Push notifications | Web Push via VAPID, delivered even when the app is closed |
+| 📍 Live GPS + reverse geocoding | Coordinates resolved to a human-readable address (Nominatim, with a BigDataCloud fallback) |
+| 👥 Trusted contacts | CRUD-backed contact list (MongoDB) — SMS fallback alerts go to specific people |
+| 📶 Offline queueing | IndexedDB-backed store-and-forward, auto-flushed on reconnect or Background Sync |
+| 📱 SMS fallback | Twilio-backed SMS to trusted contacts when there's signal but no data |
+| 🛰️ BLE mesh (receive) | Web Bluetooth GATT scanning + hop relay toward a connected device |
+| 🔋 Battery + tier metadata | Every alert carries the sender's battery level and which tier it went out on |
+| 🗒️ Alert history | Local log of sent and received alerts, with map links |
+| 💬 P2P chat | Real-time messaging over the same WebRTC data channel |
+
+---
+
+## 🧰 Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | Vanilla JS, CSS3, HTML5 — no framework, no build step |
+| P2P | WebRTC (`RTCPeerConnection` + `RTCDataChannel`), STUN + TURN |
+| Signaling | Native WebSocket (`ws`), hand-rolled offer/answer/ICE protocol |
+| Push | Web Push API, VAPID, Service Worker, Background Sync |
+| Offline storage | IndexedDB (alert queue) |
+| Mesh | Web Bluetooth (GATT notify, receive-side) |
+| Audio | Web Audio API (ultrasonic encode/decode), MediaRecorder |
+| GPS | Geolocation API, Nominatim + BigDataCloud reverse geocoding |
+| Backend | Node.js, Express-style raw `http` server |
+| Database | MongoDB via Mongoose (contacts, alert history) |
+| SMS | Twilio |
+| Hosting | Render.com |
 
 ---
 
@@ -31,90 +79,39 @@ SoundAlert was built as a solution to one of the G13 challenges at the **Youth T
 
 ### Prerequisites
 - [Node.js](https://nodejs.org/) 18+
-- A modern browser (Chrome, Firefox, Safari, Edge)
+- A modern browser (Chrome/Edge for full P2P + Bluetooth support; Safari/Firefox work for push + SMS paths)
 
 ### Install & Run
 
 ```bash
-# Clone or navigate to the project
+git clone https://github.com/TheGeekedNerd/Safety1st.git
 cd Safety1st
-
-# Install dependencies
 npm install
-
-# Start the server
 npm start
 ```
 
-Open **http://localhost:3000** in your browser.
+Open **http://localhost:3000**.
 
-> ⚠️ For full P2P + Push features, the app must be served over **HTTPS** or **localhost**.
+> ⚠️ P2P, push, and Bluetooth all require a secure context — **HTTPS or `localhost` only**.
 
----
+### Environment variables
 
-## 📁 Project Structure
-
-```
-Safety1st/
-├── public/                     # Frontend assets
-│   ├── index.html              # Main app shell
-│   ├── style.css               # App styles (light/dark mode)
-│   ├── app.js                  # PWA + Push logic
-│   ├── p2p.js                  # WebRTC peer-to-peer module
-│   ├── chat.js                 # P2P team chat
-│   ├── emergency.js            # Emergency trigger & alarm
-│   ├── gps.js                  # GPS location handling
-│   ├── history.js              # Alert history
-│   ├── sonic.js                # Ultrasonic tone detection
-│   ├── nearby.js               # Nearby device list
-│   ├── config.js                # App configuration
-│   ├── sw.js                   # Service Worker
-│   ├── webmanifest.json        # PWA manifest
-│   └── emergency_alarm.mp3     # Alarm sound asset
-│
-├── server.js                   # Node.js signaling + push server
-├── package.json                # Dependencies
-├── render.yaml                 # Render.com deployment config
-├── DEPLOY_CHECKLIST.md         # Deployment guide
-└── Safety1st_Presentation.pdf  # Expo pitch deck
-```
-
----
-
-## 🔧 Architecture
-
-```
-┌─────────────┐      WebSocket       ┌─────────────┐
-│   Browser   │ ◄──────────────────► │   Server    │
-│  (Client A) │    (Signaling)       │ (Node.js)   │
-└──────┬──────┘                      └─────────────┘
-       │
-       │ WebRTC DataChannel (P2P)
-       │
-┌──────┴──────┐
-│  Browser    │
-│  (Client B) │
-└─────────────┘
-```
-
-1. **Signaling Server** — WebSocket matchmaking to establish peer connections
-2. **WebRTC DataChannels** — Direct peer-to-peer alert + chat transmission
-3. **Service Worker** — Background push notification handling
-4. **Sonic Module** — Microphone-based tone detection for silent alerts
-
----
-
-## 🛠️ Environment Variables
-
-Create a `.env` file in the project root:
+Create a `.env` in the project root:
 
 ```env
-# VAPID keys for Web Push
-VAPID_PUBLIC_KEY=your_public_key_here
-VAPID_PRIVATE_KEY=your_private_key_here
-VAPID_SUBJECT=mailto:admin@example.com
+# Required — push notifications
+VAPID_PUBLIC_KEY=your_public_key
+VAPID_PRIVATE_KEY=your_private_key
+VAPID_SUBJECT=mailto:you@example.com
 
-# Server port
+# Optional — enables trusted contacts + alert history
+MONGO_URI=your_mongodb_connection_string
+
+# Optional — enables SMS fallback (Tier 3)
+TWILIO_ACCOUNT_SID=your_sid
+TWILIO_AUTH_TOKEN=your_auth_token
+TWILIO_FROM_NUMBER=+1xxxxxxxxxx
+
 PORT=3000
 ```
 
@@ -123,101 +120,67 @@ Generate VAPID keys:
 npx web-push generate-vapid-keys
 ```
 
----
-
-## 📱 PWA Installation
-
-### Android (Chrome)
-1. Open the app in Chrome
-2. Tap **"Add to Home Screen"** in the menu
-3. Launch from the home screen icon
-
-### iOS (Safari)
-1. Open the app in Safari
-2. Tap the **Share** button
-3. Select **"Add to Home Screen"**
-
-### Desktop (Chrome/Edge)
-1. Click the **install icon** in the address bar
-2. Or use menu → **Install SoundAlert**
+Mongo and Twilio are optional — the server runs without them, with contacts/history/SMS disabled and a console warning rather than a crash.
 
 ---
 
-## 🧪 Testing Locally
+## 📁 Project Structure
 
-### Test P2P Chat
-1. Open `http://localhost:3000` in **two browser tabs** (or two different browsers)
-2. Wait for "Connected" status on both
-3. Type a message in the **Team Chat** section
-4. Messages appear on both sides instantly — no server involved
+```
+Safety1st/
+├── public/
+│   ├── index.html          # App shell
+│   ├── style.css            # Styles
+│   ├── app.js                # PWA bootstrap, SW registration, push subscription
+│   ├── config.js              # Tunable constants (cooldowns, timeouts, limits)
+│   ├── emergency.js           # Alert trigger + tiered fallback orchestration
+│   ├── p2p.js                  # WebRTC signaling + data channel P2P
+│   ├── sonic.js                  # Ultrasonic encode/decode
+│   ├── mesh.js                    # BLE mesh (Tier 4, receive-side)
+│   ├── queue.js                     # IndexedDB store-and-forward (Tier 2)
+│   ├── contacts.js                   # Trusted contacts CRUD UI
+│   ├── status-indicator.js            # Connection/tier status badge
+│   ├── nearby.js                       # Nearby devices display
+│   ├── gps.js                           # Geolocation + reverse geocoding
+│   ├── history.js                        # Alert history log
+│   └── sw.js                              # Service Worker
+├── server.js                # HTTP + WebSocket signaling + push + SMS + Mongo backend
+├── package.json
+├── render.yaml               # Render.com deploy config
+└── DEPLOY_CHECKLIST.md
+```
 
-### Test Push Notifications
-1. Click **"📡 Test Push"** in the header
-2. Minimize the browser
-3. You should receive a system notification
+---
 
-### Test Sonic Alert
-1. Click **"🔊 Test Alarm"** to verify sound
-2. Enable Sonic listening via the UI
-3. Play the emergency tone from another device
+## 🧪 Testing locally
+
+**P2P + chat:** open two tabs/browsers at `localhost:3000`, wait for "Connected," send a chat message — it goes peer-to-peer, server only handled signaling.
+
+**Push:** click **📡 Test Push** in the header, minimize the browser, confirm the system notification fires.
+
+**Sonic:** click **🔊 Test Alarm** on one device, enable sonic listening on another nearby device, then trigger an alert — the second device should decode the tone sequence and surface the alert.
+
+**Offline queue:** trigger DevTools → Network → Offline, fire an alert, confirm it lands in IndexedDB (Application tab), then go back online and watch it flush.
+
+**SMS:** add a trusted contact with a Twilio-verified number, trigger an alert, confirm delivery (subject to Twilio trial restrictions if not upgraded).
 
 ---
 
 ## 🚢 Deployment
 
-### Render.com (Recommended)
-1. Push code to GitHub
-2. Connect repo to [Render](https://render.com)
-3. Use `render.yaml` for automatic configuration
-4. Add environment variables in the Render dashboard
-
-### Manual Deployment
-```bash
-# Set production env vars
-export NODE_ENV=production
-export PORT=3000
-
-# Start
-node server.js
-```
+Deployed on **Render.com** — `render.yaml` handles build/start config. Add the same environment variables from `.env` to the Render dashboard; they don't carry over from local automatically.
 
 ---
 
-## 🧰 Tech Stack
+## 🛣️ Roadmap / what's intentionally unfinished
 
-| Layer | Technology |
-|-------|------------|
-| Frontend | Vanilla JS, CSS3, HTML5 |
-| P2P | WebRTC (RTCPeerConnection + RTCDataChannel) |
-| Signaling | WebSocket (native) |
-| Push | Web Push API + Service Workers |
-| Audio | Web Audio API, MediaRecorder |
-| GPS | Geolocation API |
-| Backend | Node.js, Express |
-| Hosting | Render.com |
-
----
-
-## 🤝 Contributing
-
-This project was built for a **youth expo**. To extend it:
-
-- Add **shake-to-trigger** using `devicemotion` events
-- Add **audio recording clips** via `MediaRecorder`
-- Add **alert acknowledgment** ("I'm responding") pingbacks
-- Add **distance filtering** using GPS coordinates
+- **BLE mesh send-side** — needs a native wrapper (Capacitor) to advertise from a zero-signal device; currently a stub
+- **Duress cancel PIN** — two-PIN system (real cancel vs. silent fake-cancel) — planned, not yet built
+- **Continuous location during an active alert** — currently a single GPS snapshot per alert
+- **Alert escalation timer** — auto-retry/escalate if an alert goes unacknowledged
 
 ---
 
 ## 📄 License
 
-MIT — Built for community safety. Use responsibly.
-
----
-
-## 🙋 Support
-
-For issues or questions, check:
-- Browser console logs (P2P state is verbose)
-- `DEPLOY_CHECKLIST.md` for deployment troubleshooting
-- The **Reset SW** button in-app to fix service worker issues
+MIT — built for community safety. Use responsibly.
