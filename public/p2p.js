@@ -3,15 +3,14 @@
    ======================================== */
 
 const P2P = {
-    peerConnections: new Map(),   // peerId → RTCPeerConnection
-    dataChannels: new Map(),      // peerId → RTCDataChannel
+    peerConnections: new Map(),
+    dataChannels: new Map(),
     localId: null,
     signalingSocket: null,
     connectedPeers: new Set(),
-    pendingCandidates: new Map(), // peerId → RTCIceCandidate[] (queued before remote desc is set)
+    pendingCandidates: new Map(),
     debug: true,
 
-    // FIX: Queue alerts received before Emergency module is ready
     _pendingAlerts: [],
 
     log: function(...args) {
@@ -29,15 +28,12 @@ const P2P = {
         this.log('Init with ID:', this.localId);
         this.connectSignaling();
 
-        // FIX: Process any alerts that arrived before Emergency was ready
         this._flushPendingAlerts();
     },
 
-    // FIX: Flush queued alerts once Emergency is available
     _flushPendingAlerts: function() {
         if (this._pendingAlerts.length === 0) return;
         if (!window.Emergency || !Emergency.handleIncomingAlert) {
-            // Retry in 500ms
             setTimeout(() => this._flushPendingAlerts(), 500);
             return;
         }
@@ -67,7 +63,6 @@ const P2P = {
 
         this.log('Connecting to signaling:', wsUrl);
 
-        // Close existing socket if any
         if (this.signalingSocket) {
             try { this.signalingSocket.close(); } catch(e) {}
             this.signalingSocket = null;
@@ -79,7 +74,6 @@ const P2P = {
             this.signalingSocket.onopen = () => {
                 this.log('✅ Signaling connected');
                 this.updateConnectionStatus('connected');
-                // Announce ourselves to all existing peers
                 setTimeout(() => {
                     this.sendSignal({ type: 'peer-hello', from: this.localId });
                 }, 300);
@@ -126,18 +120,19 @@ const P2P = {
     handleSignalingMessage: function(msg) {
         const from = msg.from;
 
-        // Ignore messages with no sender or messages from ourselves
         if (!from || from === this.localId) return;
-
-        // For targeted messages, ignore if we're not the intended recipient
         if (msg.to && msg.to !== this.localId) return;
 
         switch (msg.type) {
             case 'peer-hello':
-                // A new peer joined — we initiate the offer
                 this.log('Peer hello from:', from);
-                if (!this.peerConnections.has(from)) {
+                // Only the peer with lexicographically smaller ID initiates
+                // This prevents both peers from creating duplicate connections
+                if (!this.peerConnections.has(from) && this.localId < from) {
+                    this.log('I have smaller ID, initiating offer to:', from);
                     this.sendOffer(from);
+                } else if (!this.peerConnections.has(from)) {
+                    this.log('I have larger ID, waiting for offer from:', from);
                 }
                 break;
 
@@ -166,9 +161,23 @@ const P2P = {
 
         const pc = new RTCPeerConnection({
             iceServers: [
-                // STUN only for now — TURN servers are unreliable on free tiers
-                // For cross-network P2P, you need a paid TURN service (Twilio, Xirsys, etc.)
-                { urls: 'stun:stun.l.google.com:19302' }
+                { urls: 'stun:stun.l.google.com:19302' },
+                // Free public TURN relay for cross-network P2P
+                {
+                    urls: 'turn:openrelay.metered.ca:80',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                },
+                {
+                    urls: 'turn:openrelay.metered.ca:443',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                },
+                {
+                    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                }
             ]
         });
 
@@ -189,21 +198,26 @@ const P2P = {
             if (pc.connectionState === 'connected') {
                 this.connectedPeers.add(peerId);
                 this.updatePeerDisplay();
-            } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
                 this.cleanupPeer(peerId);
             }
         };
 
-        // Debug: log ICE candidate gathering for troubleshooting
         pc.onicegatheringstatechange = () => {
             this.log(`Peer ${peerId} ICE gathering state:`, pc.iceGatheringState);
         };
 
         pc.oniceconnectionstatechange = () => {
             this.log(`Peer ${peerId} ICE connection state:`, pc.iceConnectionState);
+            // Also add to connectedPeers when ICE connects (faster than connectionState)
+            if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                if (!this.connectedPeers.has(peerId)) {
+                    this.connectedPeers.add(peerId);
+                    this.updatePeerDisplay();
+                }
+            }
         };
 
-        // Receiver side: data channel comes in via this event
         pc.ondatachannel = (event) => {
             this.log('Data channel received from:', peerId);
             this.setupDataChannel(peerId, event.channel);
@@ -276,13 +290,19 @@ const P2P = {
     },
 
     handleOffer: async function(peerId, sdp) {
+        // If we already have a connection to this peer, close it first
+        // This handles the race where both peers tried to initiate
+        if (this.peerConnections.has(peerId)) {
+            this.log('Already have connection to', peerId, 'closing old one before handling new offer');
+            this.cleanupPeer(peerId);
+        }
+
         const pc = this.createPeerConnection(peerId);
 
         try {
             this.log('Setting remote description (offer) for:', peerId);
             await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
-            // Flush any ICE candidates that arrived before the remote desc was set
             await this.flushPendingCandidates(peerId);
 
             const answer = await pc.createAnswer();
@@ -312,7 +332,6 @@ const P2P = {
             this.log('Setting remote description (answer) for:', peerId);
             await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
-            // Flush any ICE candidates that arrived before the remote desc was set
             await this.flushPendingCandidates(peerId);
         } catch (e) {
             console.error('[P2P] Failed to handle answer:', e);
@@ -323,7 +342,6 @@ const P2P = {
         const pc = this.peerConnections.get(peerId);
         if (!pc) return;
 
-        // If remote description isn't set yet, queue the candidate
         if (!pc.remoteDescription) {
             this.log('Queuing ICE candidate for:', peerId);
             const queue = this.pendingCandidates.get(peerId) || [];
@@ -373,7 +391,7 @@ const P2P = {
                     console.error(`[P2P] ❌ Failed to send to ${peerId}:`, e);
                 }
             } else {
-                this.log('⚠️ Channel not open for peer:', peerId, '— state:', channel.readyState, '(waiting for ICE/TURN negotiation)');
+                this.log('⚠️ Channel not open for peer:', peerId, '— state:', channel.readyState);
             }
         });
 
@@ -384,21 +402,48 @@ const P2P = {
         return sentCount;
     },
 
+    broadcastChat: function(chatData) {
+        const message  = JSON.stringify({ type: 'chat', data: chatData });
+        let sentCount  = 0;
+
+        this.dataChannels.forEach((channel, peerId) => {
+            if (channel.readyState === 'open') {
+                try {
+                    channel.send(message);
+                    sentCount++;
+                    this.log('✅ Chat sent to peer:', peerId);
+                } catch (e) {
+                    console.error(`[P2P] ❌ Failed to send chat to ${peerId}:`, e);
+                }
+            } else {
+                this.log('⚠️ Chat channel not open for peer:', peerId, '— state:', channel.readyState);
+            }
+        });
+
+        return sentCount;
+    },
+
     handleP2PMessage: function(data, fromPeerId) {
         switch (data.type) {
             case 'emergency':
                 this.log('INCOMING ALERT from peer:', fromPeerId);
 
-                // FIX: Queue alert if Emergency module isn't ready yet
                 if (window.Emergency && Emergency.handleIncomingAlert) {
                     Emergency.handleIncomingAlert(data.data);
                 } else {
                     this._pendingAlerts.push(data.data);
                     this.log('[P2P] Emergency not ready, queued alert. Queue size:', this._pendingAlerts.length);
-                    // Start flushing if not already
                     this._flushPendingAlerts();
                 }
                 break;
+
+            case 'chat':
+                this.log('INCOMING CHAT from peer:', fromPeerId);
+                if (window.Chat && Chat.receive) {
+                    Chat.receive(data.data, fromPeerId);
+                }
+                break;
+
             default:
                 this.log('Unknown P2P message type:', data.type);
         }

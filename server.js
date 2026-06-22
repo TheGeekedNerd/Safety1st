@@ -1,7 +1,7 @@
 require('dotenv').config();
-const http      = require('http');
-const fs        = require('fs');
-const path      = require('path');
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const WebSocket = require('ws');
 const webpush   = require('web-push');
 const mongoose  = require('mongoose');
@@ -202,22 +202,33 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── Push subscribe ─────────────────────────────────────────────────────────
-  if (url === '/subscribe' && method === 'POST') {
-    try {
-      const subscription = await readBody(req);
-      if (!subscription.endpoint || !subscription.keys) {
-        json(res, 400, { error: 'Invalid subscription object' }); return;
+  // ── Push subscription ────────────────────────────────────────────────────────
+  if (req.url === '/subscribe' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const subscription = JSON.parse(body);
+        if (!subscription.endpoint || !subscription.keys) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid subscription object' }));
+          return;
+        }
+
+        const subStr = JSON.stringify(subscription);
+        const isNew  = !subscriptions.has(subStr);
+        subscriptions.add(subStr);
+        if (isNew) saveSubs();
+
+        console.log(`[Push] ${isNew ? 'New' : 'Re-registered'} subscriber. Total: ${subscriptions.size}`);
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, total: subscriptions.size }));
+      } catch (e) {
+        console.error('[Push] Bad subscription body:', e.message);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid JSON' }));
       }
-      const subStr = JSON.stringify(subscription);
-      const isNew  = !subscriptions.has(subStr);
-      subscriptions.add(subStr);
-      if (isNew) saveSubs();
-      console.log(`[Push] ${isNew ? 'New' : 'Re-registered'} subscriber. Total: ${subscriptions.size}`);
-      json(res, 201, { success: true, total: subscriptions.size });
-    } catch (e) {
-      json(res, 400, { error: e.message });
-    }
+    });
     return;
   }
 
@@ -443,37 +454,33 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // ── /api/alerts/history — alert log ───────────────────────────────────────
-  // ────────────────────────────────────────────────────────────────────────────
+  // ── Static files ─────────────────────────────────────────────────────────────
+  // CRITICAL FIX: Properly resolve paths to the public directory
+  let urlPath = req.url.split('?')[0];
 
-  if (url === '/api/alerts/history' && method === 'GET') {
-    if (!requireMongo(res)) { json(res, 200, []); return; }
-    try {
-      const history = await AlertLog.find()
-        .sort({ createdAt: -1 })
-        .limit(50);
-      json(res, 200, history);
-    } catch (e) {
-      json(res, 500, { error: e.message });
-    }
-    return;
+  // Remove leading slash for path.join
+  if (urlPath.startsWith('/')) {
+    urlPath = urlPath.slice(1);
   }
 
-  // ─── Static files ──────────────────────────────────────────────────────────
-  let urlPath = url;
-  if (urlPath.startsWith('/')) urlPath = urlPath.slice(1);
-  if (urlPath === '') urlPath = 'index.html';
+  // Default to index.html for root
+  if (urlPath === '') {
+    urlPath = 'index.html';
+  }
 
   const filePath    = path.join(__dirname, 'public', urlPath);
   const ext         = path.extname(filePath).toLowerCase();
   const contentType = mimeTypes[ext] || 'application/octet-stream';
 
+  console.log('[Server] Resolved path:', urlPath, '→', filePath);
+  console.log('[Server] __dirname:', __dirname);
+  console.log('[Server] File exists check:', fs.existsSync(filePath));
+
   fs.readFile(filePath, (err, content) => {
     if (err) {
       if (err.code === 'ENOENT') {
         if (!ext || ext === '') {
-          // SPA fallback
+          console.log('[Server] SPA fallback for route:', req.url);
           const indexPath = path.join(__dirname, 'public', 'index.html');
           fs.readFile(indexPath, (err2, indexContent) => {
             if (err2) { res.writeHead(404); res.end('404 Not Found'); }
@@ -533,6 +540,36 @@ wss.on('connection', (ws) => {
 // ─── START ────────────────────────────────────────────────────────────────────
 server.listen(PORT, () => {
   console.log(`[Server] Running on port ${PORT}`);
-  console.log(`[Server] SMS fallback: ${twilioClient ? 'enabled' : 'disabled (set TWILIO_* env vars)'}`);
-  console.log(`[Server] MongoDB: ${MONGO_URI ? 'configured' : 'not configured (contacts/history unavailable)'}`);
+  console.log(`[Server] __dirname: ${__dirname}`);
+
+  // Check multiple possible public directory locations
+  const possiblePaths = [
+    path.join(__dirname, 'public'),
+    path.join(__dirname, '..', 'public'),
+    path.join(__dirname, '..', '..', 'public'),
+    '/opt/render/project/public',
+    '/opt/render/project/src/public',
+    path.join(process.cwd(), 'public')
+  ];
+
+  console.log('[Server] Checking possible public directories:');
+  let foundPublic = null;
+  for (const p of possiblePaths) {
+    const exists = fs.existsSync(p);
+    console.log(`  ${exists ? '✅' : '❌'} ${p}`);
+    if (exists && !foundPublic) {
+      foundPublic = p;
+    }
+  }
+
+  if (foundPublic) {
+    console.log(`[Server] Using public directory: ${foundPublic}`);
+  } else {
+    console.error('[Server] WARNING: No public directory found!');
+    console.error('[Server] Files will not be served. Check your deployment.');
+  }
+
+  console.log(`[Server] WebSocket signaling ready`);
+  console.log(`[Server] Push subscribers loaded: ${subscriptions.size}`);
+  console.log(`[Server] Health: http://localhost:${PORT}/health`);
 });
