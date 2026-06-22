@@ -1,5 +1,11 @@
 /* ========================================
-   EMERGENCY MODULE
+   EMERGENCY MODULE — v2 (Offline Resilient)
+
+   Alert send hierarchy:
+     Tier 1 — Full internet: /broadcast immediately
+     Tier 2 — Offline/weak: queue in IndexedDB, retry on reconnect
+     Tier 3 — Cell signal, no data: SMS via /api/alerts/sms
+     Tier 4 — No signal, devices nearby: BLE mesh relay
    ======================================== */
 
 const Emergency = {
@@ -41,6 +47,11 @@ const Emergency = {
             if (msg.type === 'TRIGGER_EMERGENCY_ALARM') {
                 console.log('[Emergency] Triggering alarm from push notification tap');
                 this.handleIncomingAlert(msg.data);
+            }
+
+            // Service worker signals that a queued alert was flushed via Background Sync
+            if (msg.type === 'QUEUE_FLUSHED') {
+                console.log('[Emergency] SW flushed queued alerts:', msg.sent);
             }
         });
 
@@ -113,6 +124,32 @@ const Emergency = {
         const timeString = alertTime.toLocaleString();
         const timeISO = alertTime.toISOString();
 
+        // Attach battery level if available
+        let batteryPct = null;
+        try {
+            if (navigator.getBattery) {
+                const bat = await navigator.getBattery();
+                batteryPct = Math.round(bat.level * 100);
+            }
+        } catch (_) { /* optional */ }
+
+        const alertData = {
+            id              : Date.now().toString(36),
+            alertType       : alertType,
+            alertTypeLabel  : typeConfig.label,
+            alertTypeShort  : typeConfig.shortLabel,
+            alertTypeColor  : typeConfig.color,
+            timestamp       : timeISO,
+            timeFormatted   : timeString,
+            location        : locationText,
+            lat             : GPS.currentLocation ? GPS.currentLocation.lat  : null,
+            lng             : GPS.currentLocation ? GPS.currentLocation.lng  : null,
+            message         : typeConfig.message,
+            description     : typeConfig.description,
+            battery         : batteryPct,
+            hopCount        : 0,
+        };
+
         const alertDetail = document.getElementById('alertDetail');
         if (alertDetail) {
             alertDetail.innerHTML = `
@@ -122,31 +159,15 @@ const Emergency = {
             `;
         }
 
-        const alertData = {
-            id: Date.now().toString(36),
-            alertType: alertType,
-            alertTypeLabel: typeConfig.label,
-            alertTypeShort: typeConfig.shortLabel,
-            alertTypeColor: typeConfig.color,
-            timestamp: timeISO,
-            timeFormatted: timeString,
-            location: locationText,
-            lat: GPS.currentLocation ? GPS.currentLocation.lat : null,
-            lng: GPS.currentLocation ? GPS.currentLocation.lng : null,
-            message: typeConfig.message,
-            description: typeConfig.description
-        };
-
         console.log('[Emergency] Dispatching alert. Type:', alertType, '| Location:', locationText);
 
+        // Existing channels (unchanged)
         if (window.SonicAlert) SonicAlert.transmit(alertData);
 
         if (window.P2P) {
             const peerCount = P2P.broadcastAlert(alertData);
             console.log(`[Emergency] P2P sent to ${peerCount} peers`);
         }
-
-        this.sendPushNotification(alertData);
 
         if (navigator.share) {
             navigator.share({
@@ -164,6 +185,10 @@ const Emergency = {
 
         History.save(locationText, alertType, typeConfig.label);
 
+        // ── Tiered send ───────────────────────────────────────────────────────
+        await this.sendWithFallback(alertData);
+        // ─────────────────────────────────────────────────────────────────────
+
         this.playAlertSound();
 
         if (navigator.vibrate) {
@@ -176,24 +201,92 @@ const Emergency = {
         }, CONFIG.EMERGENCY.AUTO_CANCEL_DELAY);
     },
 
+    // ── Tier 1 + 2 + 3 + 4 ───────────────────────────────────────────────────
+
+    sendWithFallback: async function(alertData) {
+        // Tier 1 — full internet
+        if (navigator.onLine) {
+            const sent = await this.sendPushNotification(alertData);
+            if (sent) {
+                console.log('[Emergency] Tier 1: sent via internet');
+                if (window.StatusIndicator) StatusIndicator.init(); // refresh badge
+                return;
+            }
+        }
+
+        // Tier 2 — offline: queue in IndexedDB (will flush on reconnect / BG sync)
+        if (window.Queue) {
+            console.log('[Emergency] Tier 2: internet unavailable — queuing alert');
+            await Queue.enqueue(alertData);
+            // Ask SW to register a Background Sync so it retries even when page is closed
+            this.registerBackgroundSync();
+        }
+
+        // Tier 3 — try SMS if we have cell signal (no data needed server-side)
+        const smsOk = await this.sendViaSms(alertData);
+        if (smsOk) {
+            console.log('[Emergency] Tier 3: sent via SMS fallback');
+            return;
+        }
+
+        // Tier 4 — BLE mesh relay (queue for native layer; also triggers scan if available)
+        console.log('[Emergency] Tier 4: no internet or SMS — signalling mesh');
+        if (window.Mesh) Mesh.noteSend(alertData);
+    },
+
+    // ── Tier 1 helper ─────────────────────────────────────────────────────────
+
     sendPushNotification: async function(alertData) {
         try {
             const response = await fetch('/broadcast', {
-                method: 'POST',
+                method : 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(alertData)
+                body   : JSON.stringify(alertData),
             });
 
-            if (!response.ok) {
-                throw new Error(`Server returned ${response.status}`);
-            }
+            if (!response.ok) throw new Error(`Server returned ${response.status}`);
 
             const result = await response.json();
             console.log(`[Emergency] Push broadcast sent to ${result.sent} devices`);
+            return true;
         } catch (err) {
-            console.error('[Emergency] Push broadcast failed:', err);
+            console.warn('[Emergency] Push broadcast failed:', err.message);
+            return false;
         }
     },
+
+    // ── Tier 3 helper ─────────────────────────────────────────────────────────
+
+    sendViaSms: async function(alertData) {
+        // SMS only makes sense if we have cell signal (navigator.onLine can be
+        // false even when SMS works, since data and voice are independent).
+        // We attempt it optimistically and treat an error as "unavailable".
+        try {
+            const res = await fetch('/api/alerts/sms', {
+                method : 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body   : JSON.stringify({ ...alertData, tier: 'sms' }),
+            });
+            if (!res.ok) return false;
+            const data = await res.json();
+            if (data.sent > 0 && window.StatusIndicator) StatusIndicator.setTierSms();
+            return data.sent > 0;
+        } catch (_) {
+            return false;
+        }
+    },
+
+    // ── Background Sync registration ──────────────────────────────────────────
+
+    registerBackgroundSync: function() {
+        if (!('serviceWorker' in navigator) || !('SyncManager' in window)) return;
+        navigator.serviceWorker.ready
+            .then(reg => reg.sync.register('flush-alert-queue'))
+            .then(() => console.log('[Emergency] Background Sync registered'))
+            .catch(err => console.warn('[Emergency] Background Sync registration failed:', err.message));
+    },
+
+    // ── Cancel ────────────────────────────────────────────────────────────────
 
     cancel: function() {
         if (!this.isAlerting) return;
@@ -227,21 +320,23 @@ const Emergency = {
         }
     },
 
+    // ── Incoming (from push / P2P) ────────────────────────────────────────────
+
     handleIncomingAlert: function(alert) {
         if (!alert) return;
         console.log('[Emergency] INCOMING ALERT:', alert);
 
         const typeConfig = this.ALERT_TYPES[alert.alertType] || {
-            label: alert.alertTypeLabel || 'EMERGENCY',
-            color: alert.alertTypeColor || '#E24B4A',
+            label     : alert.alertTypeLabel || 'EMERGENCY',
+            color     : alert.alertTypeColor || '#E24B4A',
             shortLabel: alert.alertTypeShort || 'ALERT',
-            message: alert.message || 'EMERGENCY ALERT!'
+            message   : alert.message || 'EMERGENCY ALERT!'
         };
 
-        const overlay = document.getElementById('incomingAlert');
+        const overlay    = document.getElementById('incomingAlert');
         const locationEl = document.getElementById('incomingLocation');
-        const timeEl = document.getElementById('incomingTime');
-        const mapLink = document.getElementById('incomingMap');
+        const timeEl     = document.getElementById('incomingTime');
+        const mapLink    = document.getElementById('incomingMap');
 
         if (overlay) {
             let typeBadge = document.getElementById('incomingTypeBadge');
@@ -259,7 +354,7 @@ const Emergency = {
             `;
 
             if (locationEl) locationEl.textContent = alert.location || 'Location unknown';
-            if (timeEl) timeEl.textContent = alert.timeFormatted || new Date(alert.timestamp).toLocaleString();
+            if (timeEl)     timeEl.textContent     = alert.timeFormatted || new Date(alert.timestamp).toLocaleString();
 
             if (mapLink) {
                 if (alert.lat && alert.lng) {
@@ -275,19 +370,15 @@ const Emergency = {
         }
 
         this.playAlertSound();
+        if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]);
 
-        if (navigator.vibrate) {
-            navigator.vibrate([200, 100, 200, 100, 400]);
-        }
-
-        // Show notification
         if ('Notification' in window && Notification.permission === 'granted') {
             if (navigator.serviceWorker && navigator.serviceWorker.controller) {
                 navigator.serviceWorker.controller.postMessage({
-                    type: 'SHOW_NOTIFICATION',
+                    type : 'SHOW_NOTIFICATION',
                     title: typeConfig.message,
-                    body: `[${typeConfig.shortLabel}] Someone needs help! ${alert.location || ''}`,
-                    data: alert
+                    body : `[${typeConfig.shortLabel}] Someone needs help! ${alert.location || ''}`,
+                    data : alert
                 });
             } else {
                 try {
@@ -301,9 +392,7 @@ const Emergency = {
             }
         }
 
-        if (window.History) {
-            History.addFromServer(alert);
-        }
+        if (window.History) History.addFromServer(alert);
     },
 
     dismissIncoming: function() {
@@ -314,6 +403,8 @@ const Emergency = {
         }
     },
 
+    // ── Sound ─────────────────────────────────────────────────────────────────
+
     playAlertSound: function() {
         if (!CONFIG.NOTIFICATIONS.SOUND) return;
 
@@ -322,7 +413,6 @@ const Emergency = {
             audio.volume = 1.0;
             let playCount = 0;
             const maxPlays = 3;
-
             audio.onended = () => {
                 playCount++;
                 if (playCount < maxPlays) {
@@ -330,7 +420,6 @@ const Emergency = {
                     audio.play().catch(() => {});
                 }
             };
-
             audio.play().catch(() => this.playFallbackSound());
         } catch (e) {
             this.playFallbackSound();
@@ -344,8 +433,8 @@ const Emergency = {
             }
             if (this.audioContext.state === 'suspended') this.audioContext.resume();
 
-            const ctx = this.audioContext;
-            const now = ctx.currentTime;
+            const ctx        = this.audioContext;
+            const now        = ctx.currentTime;
             const masterGain = ctx.createGain();
             masterGain.gain.setValueAtTime(0, now);
             masterGain.gain.linearRampToValueAtTime(1.0, now + 0.05);
@@ -359,7 +448,7 @@ const Emergency = {
             compressor.release.setValueAtTime(0.1, now);
             compressor.connect(masterGain);
 
-            const osc1 = ctx.createOscillator();
+            const osc1  = ctx.createOscillator();
             const gain1 = ctx.createGain();
             osc1.type = 'sawtooth';
             osc1.connect(gain1);
@@ -391,9 +480,7 @@ const Emergency = {
         this.playAlertSound();
     },
 
-    isActive: function() {
-        return this.isAlerting;
-    }
+    isActive: function() { return this.isAlerting; }
 };
 
 window.Emergency = Emergency;
