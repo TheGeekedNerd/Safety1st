@@ -14,6 +14,7 @@ const App = {
         console.log('[App] Version:', this.getVersion());
         console.log('[App] Protocol:', window.location.protocol);
         console.log('[App] URL:', window.location.href);
+        console.log('[App] Device ID:', CONFIG.DEVICE_ID);
 
         this.registerSW();
         this.requestNotificationPermission();
@@ -120,11 +121,20 @@ const App = {
     syncSubscriptionWithServer: async function(subscription) {
         try {
             console.log('[App] Syncing subscription with server...');
+            console.log('[App] Tagging with deviceId:', CONFIG.DEVICE_ID);
 
+            // Send deviceId alongside the subscription so the server can
+            // exclude THIS device when broadcasting alerts THIS device sends.
+            // Without this, a device receives a push notification (and plays
+            // the alarm) for its own emergency alert — which is dangerous,
+            // e.g. if the person is hiding the phone during an active threat.
             const subResponse = await fetch('/subscribe', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(subscription)
+                body: JSON.stringify({
+                    deviceId: CONFIG.DEVICE_ID,
+                    subscription: subscription
+                })
             });
 
             if (!subResponse.ok) {
@@ -324,6 +334,8 @@ const App = {
                     timeFormatted: new Date().toLocaleString(),
                     location: 'Test notification',
                     message: 'TEST NOTIFICATION'
+                    // Note: deviceId intentionally omitted here so the test
+                    // button still pushes back to this device for verification.
                 })
             });
             const result = await response.json();
@@ -345,7 +357,7 @@ const App = {
     },
 
     getVersion: function() {
-        return '4.6-clean';
+        return '4.7-sender-excluded';
     }
 };
 
