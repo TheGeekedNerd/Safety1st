@@ -74,24 +74,64 @@ if (MONGO_URI) {
 }
 
 // ─── PERSISTENT PUSH SUBSCRIPTIONS ───────────────────────────────────────────
+//
+// Each entry is now { deviceId, subscription }. deviceId lets /broadcast
+// exclude whichever device originated a given alert, so a sender never
+// receives a push (and therefore never plays a sound/vibration/notification)
+// for the alert they just sent themselves.
+//
+// Stored on disk as an array of { deviceId, subscription } objects.
+// For backward compatibility, old files containing bare JSON-stringified
+// subscription objects (no deviceId) are still loaded — those entries just
+// won't be excludable by deviceId until the client re-syncs (which it does
+// automatically on next launch with the new app.js).
 
-const SUBS_FILE   = path.join(__dirname, 'subscriptions.json');
-let subscriptions = new Set();
+const SUBS_FILE = path.join(__dirname, 'subscriptions.json');
+
+// In-memory: Map<endpoint, { deviceId, subscription }>
+// Keyed by endpoint because a push subscription's endpoint is the unique
+// identity for that device's push channel.
+let subscriptions = new Map();
+
+function endpointOf(sub) {
+  return sub && sub.endpoint;
+}
 
 function loadSubs() {
+  subscriptions = new Map();
   try {
-    const arr = JSON.parse(fs.readFileSync(SUBS_FILE, 'utf8'));
-    subscriptions = new Set(arr);
+    const raw = JSON.parse(fs.readFileSync(SUBS_FILE, 'utf8'));
+    for (const item of raw) {
+      let deviceId, subscription;
+
+      if (typeof item === 'string') {
+        // Legacy format: bare JSON-stringified subscription, no deviceId.
+        try {
+          subscription = JSON.parse(item);
+        } catch (_) { continue; }
+        deviceId = null;
+      } else if (item && item.subscription) {
+        // Current format.
+        deviceId     = item.deviceId || null;
+        subscription = item.subscription;
+      } else {
+        continue;
+      }
+
+      const ep = endpointOf(subscription);
+      if (ep) subscriptions.set(ep, { deviceId, subscription });
+    }
     console.log(`[Push] Loaded ${subscriptions.size} saved subscriptions`);
   } catch (_) {
-    subscriptions = new Set();
+    subscriptions = new Map();
     console.log('[Push] No saved subscriptions — starting fresh');
   }
 }
 
 function saveSubs() {
   try {
-    fs.writeFileSync(SUBS_FILE, JSON.stringify([...subscriptions]));
+    const arr = [...subscriptions.values()];
+    fs.writeFileSync(SUBS_FILE, JSON.stringify(arr));
   } catch (e) {
     console.error('[Push] Failed to save subscriptions:', e.message);
   }
@@ -169,10 +209,11 @@ const server = http.createServer(async (req, res) => {
 
   // ── Debug ──────────────────────────────────────────────────────────────────
   if (url === '/debug-subs') {
-    const subs = [...subscriptions].map((subStr, idx) => {
-      const sub = JSON.parse(subStr);
+    const subs = [...subscriptions.values()].map((entry, idx) => {
+      const sub = entry.subscription;
       return {
         id           : idx + 1,
+        deviceId     : entry.deviceId || '(unset — legacy entry)',
         endpoint     : sub.endpoint ? sub.endpoint.substring(0, 60) + '...' : 'invalid',
         hasP256dh    : !!sub.keys?.p256dh,
         hasAuth      : !!sub.keys?.auth,
@@ -208,19 +249,32 @@ const server = http.createServer(async (req, res) => {
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
-        const subscription = JSON.parse(body);
-        if (!subscription.endpoint || !subscription.keys) {
+        const payload = JSON.parse(body);
+
+        // Accept both shapes:
+        //  - new: { deviceId, subscription: {...} }
+        //  - legacy: the raw subscription object itself (no deviceId)
+        let deviceId, subscription;
+        if (payload && payload.subscription) {
+          deviceId     = payload.deviceId || null;
+          subscription = payload.subscription;
+        } else {
+          deviceId     = null;
+          subscription = payload;
+        }
+
+        if (!subscription || !subscription.endpoint || !subscription.keys) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Invalid subscription object' }));
           return;
         }
 
-        const subStr = JSON.stringify(subscription);
-        const isNew  = !subscriptions.has(subStr);
-        subscriptions.add(subStr);
-        if (isNew) saveSubs();
+        const ep    = subscription.endpoint;
+        const isNew = !subscriptions.has(ep);
+        subscriptions.set(ep, { deviceId, subscription });
+        saveSubs();
 
-        console.log(`[Push] ${isNew ? 'New' : 'Re-registered'} subscriber. Total: ${subscriptions.size}`);
+        console.log(`[Push] ${isNew ? 'New' : 'Re-registered'} subscriber (deviceId: ${deviceId || 'unset'}). Total: ${subscriptions.size}`);
         res.writeHead(201, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, total: subscriptions.size }));
       } catch (e) {
@@ -290,25 +344,43 @@ const server = http.createServer(async (req, res) => {
         }
       });
 
-      const deadSubs  = [];
-      const promises  = [...subscriptions].map(subStr => {
-        const sub = JSON.parse(subStr);
-        return webpush.sendNotification(sub, payload).catch(err => {
+      // ── Exclude the sending device ────────────────────────────────────────
+      // alert.deviceId identifies whichever device triggered this alert.
+      // That device must NOT receive a push back for its own alert — the
+      // person who just pressed the button should never hear/see an alarm
+      // fire on their own screen.
+      const senderDeviceId = alert.deviceId || null;
+
+      const targets = [...subscriptions.values()].filter(entry => {
+        if (!senderDeviceId) return true; // no sender id given — can't exclude, send to all
+        return entry.deviceId !== senderDeviceId;
+      });
+
+      const skipped = subscriptions.size - targets.length;
+      if (senderDeviceId) {
+        console.log(`[Push] Excluding sender device (${senderDeviceId}) — ${skipped} subscription(s) skipped`);
+      }
+
+      const deadEndpoints = [];
+      const promises = targets.map(entry => {
+        return webpush.sendNotification(entry.subscription, payload).catch(err => {
           console.error('[Push] Send failed:', err.statusCode, err.message);
-          if (err.statusCode === 410 || err.statusCode === 404) deadSubs.push(subStr);
+          if (err.statusCode === 410 || err.statusCode === 404) {
+            deadEndpoints.push(endpointOf(entry.subscription));
+          }
         });
       });
 
       await Promise.all(promises);
-      if (deadSubs.length > 0) {
-        deadSubs.forEach(s => subscriptions.delete(s));
+      if (deadEndpoints.length > 0) {
+        deadEndpoints.forEach(ep => subscriptions.delete(ep));
         saveSubs();
-        console.log(`[Push] Removed ${deadSubs.length} expired subscriptions`);
+        console.log(`[Push] Removed ${deadEndpoints.length} expired subscriptions`);
       }
 
-      const sent = subscriptions.size;
-      console.log(`[Push] Broadcast sent to ${sent} devices`);
-      json(res, 200, { success: true, sent });
+      const sent = targets.length;
+      console.log(`[Push] Broadcast sent to ${sent} devices (${skipped} excluded as sender)`);
+      json(res, 200, { success: true, sent, excluded: skipped });
     } catch (e) {
       console.error('[Push] Broadcast error:', e.message);
       json(res, 400, { error: 'Invalid alert data' });
