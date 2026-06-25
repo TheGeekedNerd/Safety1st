@@ -8,14 +8,53 @@ const GPS = {
     addressPromise: null,
     lastGeocodeCoords: null,
     geocodeAttempts: 0,
+
+    watchId: null,
+    permissionState: 'unknown', // 'unknown' | 'granted' | 'denied' | 'prompt'
+
+    // Tuning constants
+    STALE_AFTER_MS: 20000,      // a fix older than this is "stale" — accept a worse-accuracy replacement
+    MIN_MOVE_METERS: 15,        // ignore new fixes that haven't moved further than this (kills GPS jitter)
+    ACCURACY_WORSE_TOLERANCE_M: 10, // allow slightly worse accuracy without rejecting, to avoid flapping
+
     isAvailable: function() {
         return !!this.currentLocation;
     },
 
-    // Alias for index.html onclick="GPS.getLocation()"
+    // ── Button handler — index.html onclick="GPS.getLocation()" ─────────────
+    // This now actually DOES something when tapped: forces a fresh, high
+    // accuracy read, and surfaces permission problems clearly instead of
+    // doing nothing. (Previously this only read cached state and never
+    // touched navigator.geolocation at all.)
     getLocation: function() {
-        console.log('[GPS] getLocation() called (alias for getFormattedLocationAsync)');
-        return this.getFormattedLocationAsync();
+        console.log('[GPS] getLocation() called — forcing fresh read');
+
+        if (!('geolocation' in navigator)) {
+            this._setPill('GPS not supported');
+            return Promise.resolve(this.getFormattedLocation());
+        }
+
+        if (this.permissionState === 'denied') {
+            this._setPill('GPS blocked — tap to fix');
+            this._explainBlockedPermission();
+            return Promise.resolve(this.getFormattedLocation());
+        }
+
+        this._setPill('Locating…');
+
+        return new Promise((resolve) => {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    this._handleFix(position, { force: true });
+                    resolve(this.getFormattedLocationAsync());
+                },
+                (err) => {
+                    this._handleError(err);
+                    resolve(this.getFormattedLocation());
+                },
+                { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+            );
+        });
     },
 
     getFormattedLocation: function() {
@@ -29,21 +68,13 @@ const GPS = {
     },
 
     getFormattedLocationAsync: async function() {
-        console.log('[GPS] getFormattedLocationAsync called');
-        console.log('[GPS] formattedAddress:', this.formattedAddress);
-        console.log('[GPS] addressPromise:', this.addressPromise ? 'exists' : 'null');
-
         if (this.formattedAddress) {
-            console.log('[GPS] Returning cached address:', this.formattedAddress);
             return this.formattedAddress;
         }
         if (this.addressPromise) {
-            console.log('[GPS] Waiting for in-flight geocode...');
             await this.addressPromise;
-            console.log('[GPS] Geocode finished, address:', this.formattedAddress);
             return this.formattedAddress || this.getFormattedLocation();
         }
-        console.log('[GPS] No address or promise, returning:', this.getFormattedLocation());
         return this.getFormattedLocation();
     },
 
@@ -55,71 +86,178 @@ const GPS = {
         return this.currentLocation;
     },
 
-    _updateGPSPill: function(address) {
+    _setPill: function(text) {
         const gpsDisplay = document.getElementById('gpsDisplay');
-        if (gpsDisplay) {
-            const display = address.length > 28 ? address.substring(0, 26) + '…' : address;
-            gpsDisplay.textContent = display;
-        }
+        if (gpsDisplay) gpsDisplay.textContent = text;
     },
 
-    init: function() {
-        console.log('[GPS] GPS.init() called');
-        if (!('geolocation' in navigator)) {
-            console.log('[GPS] Geolocation not supported');
+    _updateGPSPill: function(address) {
+        const display = address.length > 28 ? address.substring(0, 26) + '…' : address;
+        this._setPill(display);
+    },
+
+    _explainBlockedPermission: function() {
+        // JS cannot re-trigger the native permission prompt once a site has
+        // been denied — the only way back is the user re-enabling it in
+        // their browser's site settings. Tell them that plainly.
+        if (document.getElementById('gpsBlockedNotice')) return;
+
+        const notice = document.createElement('div');
+        notice.id = 'gpsBlockedNotice';
+        notice.style.cssText = `
+            position: fixed; bottom: 16px; left: 16px; right: 16px;
+            background: #2a2a2a; color: #fff; padding: 12px 14px;
+            border-radius: 10px; font-size: 13px; line-height: 1.4;
+            z-index: 99999; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+        `;
+        notice.innerHTML = `
+            <strong>Location is blocked for this app.</strong><br>
+            Open your browser's site settings for this page and set
+            Location to "Allow", then reload.
+            <button id="gpsBlockedDismiss" style="margin-top:8px;display:block;background:transparent;border:1px solid #666;color:#ccc;border-radius:6px;padding:4px 10px;cursor:pointer;">Got it</button>
+        `;
+        document.body.appendChild(notice);
+        document.getElementById('gpsBlockedDismiss').onclick = () => notice.remove();
+    },
+
+    // ── Distance helper (Haversine, meters) ──────────────────────────────────
+    _distanceMeters: function(lat1, lng1, lat2, lng2) {
+        const R = 6371000;
+        const toRad = d => d * Math.PI / 180;
+        const dLat = toRad(lat2 - lat1);
+        const dLng = toRad(lng2 - lng1);
+        const a = Math.sin(dLat / 2) ** 2 +
+                  Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+        return 2 * R * Math.asin(Math.sqrt(a));
+    },
+
+    // ── Core fix-acceptance logic ─────────────────────────────────────────────
+    // Decides whether a new geolocation reading should replace the current
+    // one. Filters out GPS jitter so the displayed location stops flickering
+    // between nearby points, while still tracking genuine movement.
+    _handleFix: function(position, opts = {}) {
+        const next = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+            timestamp: position.timestamp
+        };
+
+        const prev = this.currentLocation;
+
+        if (!prev || opts.force) {
+            this._acceptFix(next, opts.force ? 'forced refresh' : 'first fix');
             return;
         }
 
-        navigator.geolocation.getCurrentPosition(
-            (position) => {
-                this.currentLocation = {
-                    lat: position.coords.latitude,
-                    lng: position.coords.longitude,
-                    accuracy: position.coords.accuracy,
-                    timestamp: position.timestamp
-                };
-                console.log('[GPS] Initial location:', this.currentLocation.lat.toFixed(6), this.currentLocation.lng.toFixed(6));
-                this.reverseGeocode(this.currentLocation.lat, this.currentLocation.lng);
-            },
-            (err) => {
-                console.error('[GPS] Initial position error:', err.code, err.message);
-            },
-            {
-                enableHighAccuracy: true,
-                timeout: 15000,
-                maximumAge: 0
-            }
-        );
+        const age = Date.now() - prev.timestamp;
+        const moved = this._distanceMeters(prev.lat, prev.lng, next.lat, next.lng);
+        const accuracyDelta = next.accuracy - prev.accuracy; // positive = worse
 
-        navigator.geolocation.watchPosition(
-            (position) => {
-                this.currentLocation = {
-                    lat: position.coords.latitude,
-                    lng: position.coords.longitude,
-                    accuracy: position.coords.accuracy,
-                    timestamp: position.timestamp
+        // Reject readings that are both basically in the same spot AND
+        // meaningfully less accurate than what we already have — classic
+        // GPS jitter, not real movement.
+        if (moved < this.MIN_MOVE_METERS && accuracyDelta > this.ACCURACY_WORSE_TOLERANCE_M && age < this.STALE_AFTER_MS) {
+            console.log(`[GPS] Rejected fix — jitter (moved ${moved.toFixed(1)}m, accuracy ${prev.accuracy.toFixed(0)}m → ${next.accuracy.toFixed(0)}m)`);
+            return;
+        }
+
+        // Accept if: real movement happened, OR accuracy improved/held, OR
+        // our previous fix has gone stale and we need something newer.
+        if (moved >= this.MIN_MOVE_METERS || accuracyDelta <= 0 || age >= this.STALE_AFTER_MS) {
+            this._acceptFix(next, `moved ${moved.toFixed(1)}m, accuracy ${next.accuracy.toFixed(0)}m`);
+        }
+    },
+
+    _acceptFix: function(next, reason) {
+        this.currentLocation = next;
+        console.log(`[GPS] Fix accepted (${reason}):`, next.lat.toFixed(6), next.lng.toFixed(6), `±${Math.round(next.accuracy)}m`);
+        this.reverseGeocode(next.lat, next.lng);
+    },
+
+    _handleError: function(err) {
+        console.error('[GPS] Position error:', err.code, err.message);
+        if (err.code === err.PERMISSION_DENIED) {
+            this.permissionState = 'denied';
+            this._setPill('GPS blocked — tap to fix');
+            this._explainBlockedPermission();
+        } else if (err.code === err.TIMEOUT) {
+            this._setPill('GPS timeout — retrying');
+        } else {
+            this._setPill('GPS unavailable');
+        }
+    },
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+    init: async function() {
+        console.log('[GPS] GPS.init() called');
+        if (!('geolocation' in navigator)) {
+            console.log('[GPS] Geolocation not supported');
+            this._setPill('GPS not supported');
+            return;
+        }
+
+        // Check current permission state up front (where supported) so we
+        // can show an honest pill instead of silently doing nothing.
+        if (navigator.permissions && navigator.permissions.query) {
+            try {
+                const status = await navigator.permissions.query({ name: 'geolocation' });
+                this.permissionState = status.state; // 'granted' | 'denied' | 'prompt'
+                console.log('[GPS] Permission state:', status.state);
+
+                status.onchange = () => {
+                    console.log('[GPS] Permission changed to:', status.state);
+                    this.permissionState = status.state;
+                    if (status.state === 'granted') this._startWatch();
                 };
-                console.log('[GPS] Watch location:', this.currentLocation.lat.toFixed(6), this.currentLocation.lng.toFixed(6));
-                this.reverseGeocode(this.currentLocation.lat, this.currentLocation.lng);
+
+                if (status.state === 'denied') {
+                    this._setPill('GPS blocked — tap to fix');
+                    return; // don't bother starting watch; it'll just error
+                }
+            } catch (e) {
+                console.log('[GPS] Permissions API query failed, proceeding anyway:', e.message);
+            }
+        }
+
+        this._startWatch();
+    },
+
+    // Single source of truth for live tracking — no duplicate
+    // getCurrentPosition() race against watchPosition() like before.
+    _startWatch: function() {
+        if (this.watchId !== null) return; // already watching
+
+        this._setPill('Locating…');
+
+        this.watchId = navigator.geolocation.watchPosition(
+            (position) => {
+                this.permissionState = 'granted';
+                this._handleFix(position);
             },
-            (err) => {
-                console.error('[GPS] Watch error:', err.code, err.message);
-            },
+            (err) => this._handleError(err),
             {
                 enableHighAccuracy: true,
                 timeout: 15000,
-                maximumAge: 30000
+                maximumAge: 10000
             }
         );
     },
 
     reverseGeocode: async function(lat, lng) {
-        const coordKey = `${lat.toFixed(4)},${lng.toFixed(4)}`;
-        if (this.lastGeocodeCoords === coordKey) {
-            console.log('[GPS] Already geocoded these coords, skipping');
-            return;
+        // Tied to the same movement threshold as fix acceptance, so jitter
+        // that's filtered out up there doesn't sneak back in here and
+        // trigger pointless re-geocoding / flickering addresses.
+        if (this.lastGeocodeCoords) {
+            const moved = this._distanceMeters(
+                this.lastGeocodeCoords.lat, this.lastGeocodeCoords.lng, lat, lng
+            );
+            if (moved < this.MIN_MOVE_METERS) {
+                console.log(`[GPS] Skipping geocode — only moved ${moved.toFixed(1)}m`);
+                return;
+            }
         }
-        this.lastGeocodeCoords = coordKey;
+        this.lastGeocodeCoords = { lat, lng };
 
         console.log('[GPS] Starting geocode for:', lat, lng);
         const promise = this._doGeocode(lat, lng);
@@ -135,26 +273,14 @@ const GPS = {
         // Try Nominatim first
         try {
             const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
-            console.log('[GPS] Fetching:', url);
-
             const response = await fetch(url, {
-                headers: {
-                    'User-Agent': 'SoundAlert-Emergency-App/1.0'
-                }
+                headers: { 'User-Agent': 'SoundAlert-Emergency-App/1.0' }
             });
 
-            console.log('[GPS] Nominatim response status:', response.status);
-
-            if (!response.ok) {
-                throw new Error('Nominatim failed: ' + response.status);
-            }
+            if (!response.ok) throw new Error('Nominatim failed: ' + response.status);
 
             const data = await response.json();
-            console.log('[GPS] Nominatim raw:', JSON.stringify(data).substring(0, 200));
-
-            if (data.error) {
-                throw new Error('Nominatim error: ' + data.error);
-            }
+            if (data.error) throw new Error('Nominatim error: ' + data.error);
 
             const address = this.formatAddress(data);
             this.formattedAddress = address;
@@ -164,7 +290,6 @@ const GPS = {
 
             const alertDetail = document.getElementById('alertDetail');
             if (alertDetail && window.Emergency && Emergency.isAlerting) {
-                console.log('[GPS] Updating alertDetail UI');
                 alertDetail.innerHTML = `
                     ${address}<br>
                     <small style="color:#888;">${new Date().toLocaleString()}</small>
@@ -181,15 +306,9 @@ const GPS = {
             console.log('[GPS] Trying BigDataCloud fallback...');
             const url = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`;
             const response = await fetch(url);
-            console.log('[GPS] BigDataCloud response status:', response.status);
-
-            if (!response.ok) {
-                throw new Error('BigDataCloud failed: ' + response.status);
-            }
+            if (!response.ok) throw new Error('BigDataCloud failed: ' + response.status);
 
             const data = await response.json();
-            console.log('[GPS] BigDataCloud raw:', JSON.stringify(data).substring(0, 200));
-
             const address = this.formatBigDataCloud(data);
             this.formattedAddress = address;
             console.log('[GPS] SUCCESS (fallback) - Address:', address);
@@ -211,6 +330,9 @@ const GPS = {
 
         console.log('[GPS] All geocoding failed, keeping coords');
         this.formattedAddress = null;
+        if (this.currentLocation) {
+            this._setPill(`${this.currentLocation.lat.toFixed(4)}, ${this.currentLocation.lng.toFixed(4)}`);
+        }
     },
 
     formatAddress: function(data) {
@@ -219,9 +341,7 @@ const GPS = {
         }
 
         const addr = data.address;
-        console.log('[GPS] Formatting address from:', JSON.stringify(addr));
 
-        // Priority 1: named building or place
         const buildingName =
             addr.building ||
             addr['addr:housename'] ||
@@ -236,13 +356,11 @@ const GPS = {
             addr.hospital ||
             addr.place;
 
-        // Priority 2: street address components
         const houseNumber = addr.house_number || addr['addr:housenumber'];
         const road = addr.road || addr.pedestrian || addr.footway || addr.street || addr.highway;
         const suburb = addr.suburb || addr.neighbourhood || addr.district || addr.borough;
         const city = addr.city || addr.town || addr.village || addr.hamlet || addr.municipality;
 
-        // If we have a building/place name, prefer it: "Building Name, Suburb, City"
         if (buildingName) {
             const parts = [buildingName];
             if (suburb) parts.push(suburb);
@@ -250,7 +368,6 @@ const GPS = {
             return parts.join(', ');
         }
 
-        // Fallback: street address
         const parts = [];
         if (houseNumber && road) {
             parts.push(`${houseNumber} ${road}`);
