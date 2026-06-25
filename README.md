@@ -37,6 +37,26 @@ Tier 3 is attempted on every alert regardless of whether Tier 1 succeeded — it
 
 ---
 
+## 🌍 What this version actually assumes — and an honest "ideal world" check
+
+This is an offline-*resilient* system, not an offline-*proof* one — that distinction matters and is worth stating plainly rather than leaving a reader to discover it under pressure.
+
+**In its current form, this version works reliably under what we'd call "ideal-world" conditions:**
+
+- **At least one of the following is true at the moment of the alert:** the sender has working mobile data, OR the sender has cell signal sufficient for SMS, OR another app user is within Bluetooth/ultrasonic range with the app open.
+- **No total infrastructure collapse** — i.e. not a scenario where cell towers themselves are down (no power, no battery backup left, physically damaged), since SMS still depends on a functioning tower even though it doesn't need mobile data.
+- **The backend (Render + MongoDB + Twilio) is reachable** for Tiers 1–3, since all three currently route through `server.js` — including Tier 3's SMS dispatch, which is server-mediated via Twilio rather than sent natively from the device. This means Tier 3, despite "not needing data," still needs the *sender's* device to reach the internet to ask the server to send the SMS. It is not yet a true internet-independent path.
+- **A genuine loadshedding-style outage** (mobile data drops for minutes to hours, signal returns later) is well covered by Tier 2's offline queue — that's the realistic, common case this app is built for, and it holds up.
+- **A true blackout** — no internet anywhere nearby for anyone, AND no cell tower capacity, AND no other app user within physical range — has no path out in this version. That's not a bug to patch; it's a hard floor set by physics and infrastructure, the same floor anyone without a working phone signal would face regardless of which app they used.
+
+**Where this is heading, to close that gap in later versions:**
+- Moving Tier 3 off the server and onto a native SMS intent (via a Capacitor/TWA wrapper) so SMS works even if the sender's own internet is fully down — true cellular-only delivery.
+- Completing Tier 4's send-side (the native BLE advertising stub above) so multi-hop mesh relay works without needing any internet or cell signal at all, given other nearby devices.
+
+Presenting it this way — rather than claiming it "always works" — is a deliberate choice: a safety tool earns more trust by being precise about its own limits than by overselling a guarantee it can't keep.
+
+---
+
 ## ✨ Features
 
 | Feature | Description |
@@ -175,6 +195,7 @@ Deployed on **Render.com** — `render.yaml` handles build/start config. Add the
 ## 🛣️ Roadmap / what's intentionally unfinished
 
 - **BLE mesh send-side** — needs a native wrapper (Capacitor) to advertise from a zero-signal device; currently a stub
+- **Native SMS dispatch** — move Tier 3 off the server-mediated Twilio call onto a native SMS intent, so it works even when the sender's own internet is down
 - **Duress cancel PIN** — two-PIN system (real cancel vs. silent fake-cancel) — planned, not yet built
 - **Continuous location during an active alert** — currently a single GPS snapshot per alert
 - **Alert escalation timer** — auto-retry/escalate if an alert goes unacknowledged
