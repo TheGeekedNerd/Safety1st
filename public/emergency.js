@@ -6,6 +6,14 @@
      Tier 2 — Offline/weak: queue in IndexedDB, retry on reconnect
      Tier 3 — Cell signal, no data: SMS via /api/alerts/sms
      Tier 4 — No signal, devices nearby: BLE mesh relay
+
+   SAFETY NOTE: The device that SENDS an alert must never play the alarm
+   sound or vibrate as a result of sending it. Someone triggering this
+   while concealing their phone (e.g. held at gunpoint) cannot have the
+   device give them away with sound/vibration. The sender gets a silent,
+   visual-only confirmation instead (see showSentConfirmation). The alarm
+   sound/vibration is reserved exclusively for devices RECEIVING someone
+   else's alert (handleIncomingAlert), where audibility is the entire point.
    ======================================== */
 
 const Emergency = {
@@ -135,6 +143,7 @@ const Emergency = {
 
         const alertData = {
             id              : Date.now().toString(36),
+            deviceId        : (window.CONFIG && CONFIG.DEVICE_ID) || null,
             alertType       : alertType,
             alertTypeLabel  : typeConfig.label,
             alertTypeShort  : typeConfig.shortLabel,
@@ -189,11 +198,10 @@ const Emergency = {
         await this.sendWithFallback(alertData);
         // ─────────────────────────────────────────────────────────────────────
 
-        this.playAlertSound();
-
-        if (navigator.vibrate) {
-            navigator.vibrate([200, 100, 200, 100, 400]);
-        }
+        // SAFETY: do NOT play the alarm sound or vibrate here. This is the
+        // sender's own device — sounding off here is what we're fixing.
+        // The sender gets a quiet, visual-only confirmation instead.
+        this.showSentConfirmation(typeConfig);
 
         if (this.alertCountdown) clearTimeout(this.alertCountdown);
         this.alertCountdown = setTimeout(() => {
@@ -238,6 +246,8 @@ const Emergency = {
 
     sendPushNotification: async function(alertData) {
         try {
+            // alertData.deviceId travels with the payload so the server can
+            // exclude this device from the push fan-out (see server.js /broadcast).
             const response = await fetch('/broadcast', {
                 method : 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -247,7 +257,8 @@ const Emergency = {
             if (!response.ok) throw new Error(`Server returned ${response.status}`);
 
             const result = await response.json();
-            console.log(`[Emergency] Push broadcast sent to ${result.sent} devices`);
+            console.log(`[Emergency] Push broadcast sent to ${result.sent} devices` +
+                (typeof result.excluded === 'number' ? ` (excluded ${result.excluded} sender device(s))` : ''));
             return true;
         } catch (err) {
             console.warn('[Emergency] Push broadcast failed:', err.message);
@@ -318,9 +329,56 @@ const Emergency = {
             clearTimeout(this.alertCountdown);
             this.alertCountdown = null;
         }
+
+        this.hideSentConfirmation();
+    },
+
+    // ── Sent confirmation (sender-side, silent) ──────────────────────────────
+    // Visual-only acknowledgement that the alert went out. No sound, no
+    // vibration — this is what replaced playAlertSound() in trigger().
+
+    showSentConfirmation: function(typeConfig) {
+        let badge = document.getElementById('sentConfirmation');
+        if (!badge) {
+            badge = document.createElement('div');
+            badge.id = 'sentConfirmation';
+            badge.style.cssText = `
+                position: fixed;
+                top: 14px;
+                left: 50%;
+                transform: translateX(-50%);
+                z-index: 99999;
+                padding: 6px 14px;
+                border-radius: 20px;
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0.3px;
+                background: rgba(20,20,20,0.85);
+                color: #fff;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                pointer-events: none;
+                opacity: 0;
+                transition: opacity 0.25s ease;
+            `;
+            document.body.appendChild(badge);
+        }
+
+        const color = (typeConfig && typeConfig.color) || '#2ecc71';
+        badge.innerHTML = `<span style="color:${color};">●</span> Alert sent`;
+        badge.style.opacity = '1';
+    },
+
+    hideSentConfirmation: function() {
+        const badge = document.getElementById('sentConfirmation');
+        if (badge) badge.style.opacity = '0';
     },
 
     // ── Incoming (from push / P2P) ────────────────────────────────────────────
+    // This fires on devices RECEIVING someone else's alert. Sound and
+    // vibration here are intentional and unchanged — audibility on the
+    // receiving end is the entire point of the app.
 
     handleIncomingAlert: function(alert) {
         if (!alert) return;
@@ -403,7 +461,7 @@ const Emergency = {
         }
     },
 
-    // ── Sound ─────────────────────────────────────────────────────────────────
+    // ── Sound (receiving devices only — see note above) ──────────────────────
 
     playAlertSound: function() {
         if (!CONFIG.NOTIFICATIONS.SOUND) return;
