@@ -137,25 +137,47 @@ Mongo is optional. The server runs without it, with contacts/history disabled an
 
 ```
 Safety1st/
+├── Demonstration/             # Screenshots and demo images for the pitch/README
+│   ├── icon-512.png
+│   ├── Screenshot 2026-06-19 030935.png
+│   ├── Screenshot 2026-06-19 030941.png
+│   ├── Screenshot 2026-06-19 030948.png
+│   ├── Screenshot 2026-06-19 031012.png
+│   ├── WhatsApp Image 2026-06-19 at 03.12.14.jpeg
+│   ├── WhatsApp Image 2026-06-19 at 03.12.15.jpeg
+│   └── WhatsApp Image 2026-06-19 at 04.46.43.jpeg
 ├── public/
-│   ├── index.html          # App shell
-│   ├── style.css            # Styles
-│   ├── app.js                # PWA bootstrap, SW registration, push subscription
-│   ├── config.js              # Tunable constants (cooldowns, timeouts, limits)
-│   ├── emergency.js           # Alert trigger + tiered fallback orchestration
-│   ├── p2p.js                  # WebRTC signaling + data channel P2P
-│   ├── sonic.js                  # Ultrasonic encode/decode
-│   ├── queue.js                    # IndexedDB store-and-forward (reconnect retry)
-│   ├── contacts.js                   # Trusted contacts CRUD UI
-│   ├── status-indicator.js            # Connection/tier status badge
-│   ├── nearby.js                       # Nearby devices display
-│   ├── gps.js                           # Geolocation + reverse geocoding
-│   ├── history.js                        # Alert history log
-│   └── sw.js                              # Service Worker
-├── server.js                # HTTP + WebSocket signaling + push + Mongo backend
+│   ├── index.html              # App shell
+│   ├── style.css                # Styles
+│   ├── chat-styles.css           # P2P chat panel styles
+│   ├── app.js                     # PWA bootstrap, SW registration, push subscription
+│   ├── config.js                   # Tunable constants (cooldowns, timeouts, limits)
+│   ├── emergency.js                 # Alert trigger + tiered fallback orchestration
+│   ├── p2p.js                        # WebRTC signaling + data channel P2P
+│   ├── chat.js                        # P2P chat UI, sends over the WebRTC data channel
+│   ├── sonic.js                        # Ultrasonic encode/decode
+│   ├── mesh.js                          # BLE mesh (receive-side)
+│   ├── queue.js                          # IndexedDB store-and-forward (reconnect retry)
+│   ├── contacts.js                        # Trusted contacts CRUD UI
+│   ├── status-indicator.js                 # Connection/tier status badge
+│   ├── nearby.js                            # Nearby devices display
+│   ├── gps.js                                # Geolocation + reverse geocoding
+│   ├── history.js                             # Alert history log
+│   ├── sw.js                                   # Service Worker
+│   ├── webmanifest.json                          # PWA manifest
+│   ├── emergency_alarm.mp3                        # Alarm sound (receiving devices only)
+│   ├── icon-192.png
+│   ├── icon-512.png
+│   ├── badge-72.png
+│   └── DEPLOY_CHECKLIST.md                          # Pre-deploy checklist for this folder
+├── server.js                   # HTTP + WebSocket signaling + push + Mongo backend
+├── subscriptions.json           # Persisted push subscriptions (deviceId + endpoint pairs)
 ├── package.json
-├── render.yaml               # Render.com deploy config
-└── DEPLOY_CHECKLIST.md
+├── package-lock.json
+├── render.yaml                   # Render.com deploy config
+├── Safety1st_Presentation.pdf      # Hackathon pitch deck
+├── .env                              # Local secrets (VAPID keys, Mongo URI). Not committed
+└── .gitignore
 ```
 
 ---
