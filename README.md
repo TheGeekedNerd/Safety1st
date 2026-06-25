@@ -1,12 +1,12 @@
-# 🚨 SoundAlert — Offline-Resilient Emergency Alert System
+# 🚨 SoundAlert — Local-Network Emergency Alert System
 
-A one-tap emergency alert system designed to keep working when the network doesn't. Built for community safety in areas where internet, cell data, and signal coverage can't be relied on.
+A one-tap emergency alert system built for community safety on a shared local network — alerts go out instantly to every other device on the same WiFi, with location attached.
 
 ---
 
 ## 🏆 About This Project
 
-SoundAlert was built for the **Youth Tech Expo G13 Hackathon** (18–19 June 2026), part of the Gauteng Department of e-Government's province-wide Youth Tech Expo G13 Hackathon Series — a series tackling Gauteng's priority service-delivery challenges under the G13 priorities of the 7th Administration. SoundAlert addresses community safety: fast, multi-channel emergency response for GBV and crime incidents in areas where you can't assume connectivity.
+SoundAlert was built for the **Youth Tech Expo G13 Hackathon** (18–19 June 2026), part of the Gauteng Department of e-Government's province-wide Youth Tech Expo G13 Hackathon Series — a series tackling Gauteng's priority service-delivery challenges under the G13 priorities of the 7th Administration. SoundAlert addresses community safety: fast emergency response for GBV and crime incidents within a shared local network.
 
 🥉 **Placed 4th out of 17 teams** at the Soweto leg, held at YCWA on 18–19 June 2026.
 
@@ -16,44 +16,41 @@ Since the hackathon, the project has been extended well past the original weeken
 
 ## ⚙️ How an alert actually gets out
 
-Most emergency apps assume you have a stable connection. SoundAlert doesn't make that assumption — every alert tries multiple channels, some at the same time, some as fallbacks if earlier ones fail.
+SoundAlert is built around a shared local WiFi network — every device on that network is reachable through the server, and an alert reaches all of them in real time, with the sender's location attached.
 
-**Fired immediately, in parallel, regardless of connection:**
-- **WebRTC P2P broadcast** — direct peer-to-peer alert via `RTCDataChannel`, signaled over WebSocket, with STUN/TURN for cross-network NAT traversal
-- **Ultrasonic sound broadcast** — alert data encoded as a sequence of tones in the 18–20kHz range and played through the device speaker; any nearby phone with the app open and listening can decode it through its microphone, no Bluetooth or WiFi required
+**On trigger:**
+- The sender's GPS location is captured and reverse-geocoded to a human-readable address (Nominatim, with a BigDataCloud fallback)
+- The alert is sent to the server, which pushes it out to every other connected device on the network — the sender is deliberately excluded from receiving their own alert back (see the safety note below)
+- **WebRTC P2P broadcast** — a direct peer-to-peer copy of the alert is also sent via `RTCDataChannel`, signaled over WebSocket, for devices already peer-connected on the same network
+- **Ultrasonic sound broadcast** — the alert is also encoded as a sequence of tones in the 18–20kHz range and played through the device speaker, so any nearby phone with the app open and listening can decode it through its microphone alone, without needing to be on the same WiFi
 
-**Then, in order, as a fallback chain:**
-
-| Tier | Condition | Mechanism |
-|------|-----------|-----------|
-| 1 | Full internet | Push broadcast via the server's `/broadcast` endpoint → Web Push to all subscribed devices |
-| 2 | Offline / unstable | Alert queued in IndexedDB, retried automatically on reconnect or via Background Sync |
-| 3 | Cell signal, no data | SMS sent to trusted contacts via Twilio (works on the cheapest plans, no data required) |
-| 4 | No signal, devices nearby | BLE relay — receive-side is live (Web Bluetooth GATT), hopping packet-to-packet between phones until one reaches signal and relays it to the backend |
-
-Tier 3 is attempted on every alert regardless of whether Tier 1 succeeded — it's not a last resort, it's a parallel guarantee that trusted contacts get reached even if the push broadcast already went out.
-
-**Tier 4 honesty note:** browsers can *scan/receive* BLE advertisements but cannot *advertise* them — that's a platform limitation, not an implementation gap. So the receive-and-relay half of the mesh is fully working in the PWA; broadcasting from a phone with zero signal needs a native wrapper (Capacitor + a BLE plugin, or an SDK like Bridgefy) and is the one piece intentionally left as a stub (`Mesh.noteSend`) until that native layer exists.
+**If the network connection drops mid-send:**
+- The alert is queued in IndexedDB and automatically retried as soon as the device reconnects to the network, including via Background Sync if the app is closed
 
 ---
 
 ## 🌍 What this version actually assumes — and an honest "ideal world" check
 
-This is an offline-*resilient* system, not an offline-*proof* one — that distinction matters and is worth stating plainly rather than leaving a reader to discover it under pressure.
+This version is built around one core assumption, stated plainly rather than left for someone to discover under pressure: **everyone is on the same local WiFi network.** There is no SMS, no cellular fallback, and no internet-wide delivery in this version — it is a local-network-and-location tool, not a wide-area one.
 
-**In its current form, this version works reliably under what we'd call "ideal-world" conditions:**
+**For this version to work as designed, the following all need to be true:**
 
-- **At least one of the following is true at the moment of the alert:** the sender has working mobile data, OR the sender has cell signal sufficient for SMS, OR another app user is within Bluetooth/ultrasonic range with the app open.
-- **No total infrastructure collapse** — i.e. not a scenario where cell towers themselves are down (no power, no battery backup left, physically damaged), since SMS still depends on a functioning tower even though it doesn't need mobile data.
-- **The backend (Render + MongoDB + Twilio) is reachable** for Tiers 1–3, since all three currently route through `server.js` — including Tier 3's SMS dispatch, which is server-mediated via Twilio rather than sent natively from the device. This means Tier 3, despite "not needing data," still needs the *sender's* device to reach the internet to ask the server to send the SMS. It is not yet a true internet-independent path.
-- **A genuine loadshedding-style outage** (mobile data drops for minutes to hours, signal returns later) is well covered by Tier 2's offline queue — that's the realistic, common case this app is built for, and it holds up.
-- **A true blackout** — no internet anywhere nearby for anyone, AND no cell tower capacity, AND no other app user within physical range — has no path out in this version. That's not a bug to patch; it's a hard floor set by physics and infrastructure, the same floor anyone without a working phone signal would face regardless of which app they used.
+- The sender's device and the recipients' devices are connected to **the same local WiFi network** (e.g. a shared community/event network, a home router, a campus network).
+- The server (and, if used, the signaling/WebSocket layer for P2P) is reachable on that same network.
+- Location services are enabled and granted on the sender's device, since the location attached to the alert depends entirely on the Geolocation API succeeding.
+- For the ultrasonic path specifically: recipient devices have the app open with listening active, and are within normal speaker-to-microphone range (a few meters, no major background noise or barriers).
 
-**Where this is heading, to close that gap in later versions:**
-- Moving Tier 3 off the server and onto a native SMS intent (via a Capacitor/TWA wrapper) so SMS works even if the sender's own internet is fully down — true cellular-only delivery.
-- Completing Tier 4's send-side (the native BLE advertising stub above) so multi-hop mesh relay works without needing any internet or cell signal at all, given other nearby devices.
+**What this version genuinely does well within that scope:**
+- Real-time delivery to every other device on the network the moment an alert fires — no polling delay, no waiting for connectivity to "come back," since the network is assumed present throughout.
+- The sender never receives their own alert back, and never hears or feels anything on their own device when sending — confirmed safe for scenarios where the phone needs to stay silent and hidden.
+- A brief WiFi hiccup (not a full network outage) is handled gracefully by the offline queue, which retries automatically the moment the connection returns.
 
-Presenting it this way — rather than claiming it "always works" — is a deliberate choice: a safety tool earns more trust by being precise about its own limits than by overselling a guarantee it can't keep.
+**What this version does not cover, and isn't trying to:**
+- Anyone not on the same local network cannot receive an alert through the server or push path — there's no cellular or wide-area path in scope here.
+- If the local network itself goes down entirely (router failure, no power to the access point), the server-routed and P2P-signaled paths are both unreachable until it's restored. The ultrasonic path is the one channel that doesn't depend on the network at all, but it's short-range and condition-sensitive by nature.
+- If location services are off or denied, the alert still sends, but without a location attached — recipients get notified that help is needed, without knowing where.
+
+Scoping it this way — one network, with location, done well — is a deliberate and honest choice for this version, rather than a claim of broader coverage the system doesn't actually have.
 
 ---
 
@@ -63,14 +60,12 @@ Presenting it this way — rather than claiming it "always works" — is a delib
 |---------|-------------|
 | 🔴 One-tap emergency | GBV/Femicide and Crime/Lawlessness alert types, triggered instantly |
 | 📡 WebRTC P2P | Direct peer-to-peer alert + chat over `RTCDataChannel`, with a self-built WebSocket signaling layer |
-| 🔊 Sonic alerts | Ultrasonic tone encoding/decoding for silent, infrastructure-free signaling |
-| 📲 Push notifications | Web Push via VAPID, delivered even when the app is closed |
+| 🔊 Sonic alerts | Ultrasonic tone encoding/decoding for silent, network-free signaling between nearby devices |
+| 📲 Push notifications | Web Push via VAPID, delivered to every other device on the network even when the app is closed |
 | 📍 Live GPS + reverse geocoding | Coordinates resolved to a human-readable address (Nominatim, with a BigDataCloud fallback) |
-| 👥 Trusted contacts | CRUD-backed contact list (MongoDB) — SMS fallback alerts go to specific people |
-| 📶 Offline queueing | IndexedDB-backed store-and-forward, auto-flushed on reconnect or Background Sync |
-| 📱 SMS fallback | Twilio-backed SMS to trusted contacts when there's signal but no data |
-| 🛰️ BLE mesh (receive) | Web Bluetooth GATT scanning + hop relay toward a connected device |
-| 🔋 Battery + tier metadata | Every alert carries the sender's battery level and which tier it went out on |
+| 👥 Trusted contacts | CRUD-backed contact list (MongoDB) for reference during an incident |
+| 📶 Offline queueing | IndexedDB-backed store-and-forward, auto-flushed on reconnect or Background Sync if the network briefly drops |
+| 🔋 Battery metadata | Every alert carries the sender's battery level |
 | 🗒️ Alert history | Local log of sent and received alerts, with map links |
 | 💬 P2P chat | Real-time messaging over the same WebRTC data channel |
 
@@ -85,12 +80,10 @@ Presenting it this way — rather than claiming it "always works" — is a delib
 | Signaling | Native WebSocket (`ws`), hand-rolled offer/answer/ICE protocol |
 | Push | Web Push API, VAPID, Service Worker, Background Sync |
 | Offline storage | IndexedDB (alert queue) |
-| Mesh | Web Bluetooth (GATT notify, receive-side) |
 | Audio | Web Audio API (ultrasonic encode/decode), MediaRecorder |
 | GPS | Geolocation API, Nominatim + BigDataCloud reverse geocoding |
 | Backend | Node.js, Express-style raw `http` server |
 | Database | MongoDB via Mongoose (contacts, alert history) |
-| SMS | Twilio |
 | Hosting | Render.com |
 
 ---
@@ -99,7 +92,8 @@ Presenting it this way — rather than claiming it "always works" — is a delib
 
 ### Prerequisites
 - [Node.js](https://nodejs.org/) 18+
-- A modern browser (Chrome/Edge for full P2P + Bluetooth support; Safari/Firefox work for push + SMS paths)
+- A modern browser (Chrome/Edge for full P2P support; Safari/Firefox work for the push path)
+- All devices on the **same local WiFi network**
 
 ### Install & Run
 
@@ -110,9 +104,9 @@ npm install
 npm start
 ```
 
-Open **http://localhost:3000**.
+Open **http://localhost:3000** on each device connected to the same network.
 
-> ⚠️ P2P, push, and Bluetooth all require a secure context — **HTTPS or `localhost` only**.
+> ⚠️ P2P and push both require a secure context — **HTTPS or `localhost` only**.
 
 ### Environment variables
 
@@ -127,11 +121,6 @@ VAPID_SUBJECT=mailto:you@example.com
 # Optional — enables trusted contacts + alert history
 MONGO_URI=your_mongodb_connection_string
 
-# Optional — enables SMS fallback (Tier 3)
-TWILIO_ACCOUNT_SID=your_sid
-TWILIO_AUTH_TOKEN=your_auth_token
-TWILIO_FROM_NUMBER=+1xxxxxxxxxx
-
 PORT=3000
 ```
 
@@ -140,7 +129,7 @@ Generate VAPID keys:
 npx web-push generate-vapid-keys
 ```
 
-Mongo and Twilio are optional — the server runs without them, with contacts/history/SMS disabled and a console warning rather than a crash.
+Mongo is optional — the server runs without it, with contacts/history disabled and a console warning rather than a crash.
 
 ---
 
@@ -156,15 +145,14 @@ Safety1st/
 │   ├── emergency.js           # Alert trigger + tiered fallback orchestration
 │   ├── p2p.js                  # WebRTC signaling + data channel P2P
 │   ├── sonic.js                  # Ultrasonic encode/decode
-│   ├── mesh.js                    # BLE mesh (Tier 4, receive-side)
-│   ├── queue.js                     # IndexedDB store-and-forward (Tier 2)
+│   ├── queue.js                    # IndexedDB store-and-forward (reconnect retry)
 │   ├── contacts.js                   # Trusted contacts CRUD UI
 │   ├── status-indicator.js            # Connection/tier status badge
 │   ├── nearby.js                       # Nearby devices display
 │   ├── gps.js                           # Geolocation + reverse geocoding
 │   ├── history.js                        # Alert history log
 │   └── sw.js                              # Service Worker
-├── server.js                # HTTP + WebSocket signaling + push + SMS + Mongo backend
+├── server.js                # HTTP + WebSocket signaling + push + Mongo backend
 ├── package.json
 ├── render.yaml               # Render.com deploy config
 └── DEPLOY_CHECKLIST.md
@@ -182,8 +170,6 @@ Safety1st/
 
 **Offline queue:** trigger DevTools → Network → Offline, fire an alert, confirm it lands in IndexedDB (Application tab), then go back online and watch it flush.
 
-**SMS:** add a trusted contact with a Twilio-verified number, trigger an alert, confirm delivery (subject to Twilio trial restrictions if not upgraded).
-
 ---
 
 ## 🚢 Deployment
@@ -194,8 +180,7 @@ Deployed on **Render.com** — `render.yaml` handles build/start config. Add the
 
 ## 🛣️ Roadmap / what's intentionally unfinished
 
-- **BLE mesh send-side** — needs a native wrapper (Capacitor) to advertise from a zero-signal device; currently a stub
-- **Native SMS dispatch** — move Tier 3 off the server-mediated Twilio call onto a native SMS intent, so it works even when the sender's own internet is down
+- **Wide-area delivery beyond the local network** — currently out of scope; this version is local-WiFi-only by design
 - **Duress cancel PIN** — two-PIN system (real cancel vs. silent fake-cancel) — planned, not yet built
 - **Continuous location during an active alert** — currently a single GPS snapshot per alert
 - **Alert escalation timer** — auto-retry/escalate if an alert goes unacknowledged
