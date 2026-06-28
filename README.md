@@ -199,15 +199,8 @@ Deployed on **Render.com**. `render.yaml` handles build/start config. Add the sa
 
 ---
 
-## 🛣️ Roadmap / what's intentionally unfinished
 
-- **Wide-area delivery beyond the local network:** currently out of scope; this version is local-WiFi-only by design
-- **Duress cancel PIN:** two-PIN system (real cancel vs. silent fake-cancel), planned but not yet built
-- **Continuous location during an active alert:** currently a single GPS snapshot per alert
-- **Alert escalation timer:** auto-retry/escalate if an alert goes unacknowledged
 
----
-
-## 📄 License
+## License
 
 MIT. Built for community safety. Use responsibly.
