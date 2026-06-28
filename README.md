@@ -66,7 +66,7 @@ Scoping it this way, one network, with location, done well, is a deliberate and 
 |  Trusted contacts | CRUD-backed contact list (MongoDB) for reference during an incident |
 |  Offline queueing | IndexedDB-backed store-and-forward, auto-flushed on reconnect or Background Sync if the network briefly drops |
 |  Alert history | Local log of sent and received alerts, with map links |
-| 💬 P2P chat | Real-time messaging over the same WebRTC data channel |
+| P2P chat | Real-time messaging over the same WebRTC data channel |
 
 ---
 
@@ -185,9 +185,9 @@ Safety1st/
 
 **P2P + chat:** open two tabs/browsers at `localhost:3000`, wait for "Connected," send a chat message. It goes peer-to-peer; the server only handled signaling.
 
-**Push:** click **📡 Test Push** in the header, minimize the browser, confirm the system notification fires.
+**Push:** click ** Test Push** in the header, minimize the browser, confirm the system notification fires.
 
-**Sonic:** click **🔊 Test Alarm** on one device, enable sonic listening on another nearby device, then trigger an alert. The second device should decode the tone sequence and surface the alert.
+**Sonic:** click ** Test Alarm** on one device, enable sonic listening on another nearby device, then trigger an alert. The second device should decode the tone sequence and surface the alert.
 
 **Offline queue:** open DevTools, go to Network, set it to Offline, fire an alert, confirm it lands in IndexedDB (Application tab), then go back online and watch it flush.
 
