@@ -1,20 +1,20 @@
-# 🚨 SoundAlert: Local-Network Emergency Alert System
+#  SoundAlert: Local-Network Emergency Alert System
 
 A one-tap emergency alert system built for community safety on a shared local network. Alerts go out instantly to every other device on the same WiFi, with location attached.
 
 ---
 
-## 🏆 About This Project
+##  About This Project
 
 SoundAlert was built for the **Youth Tech Expo G13 Hackathon** (18 to 19 June 2026), part of the Gauteng Department of e-Government's province-wide Youth Tech Expo G13 Hackathon Series. The series tackles Gauteng's priority service-delivery challenges under the G13 priorities of the 7th Administration. SoundAlert addresses community safety: fast emergency response for GBV and crime incidents within a shared local network.
 
-🥉 **Placed 4th out of 17 teams** at the Soweto leg, held at YCWA on 18 to 19 June 2026.
+ **Placed 4th out of 17 teams** at the Soweto leg, held at YCWA on 18 to 19 June 2026.
 
 Since the hackathon, the project has been extended well past the original weekend build. Most of what's below didn't exist at expo time and was added afterward as a personal/portfolio project.
 
 ---
 
-## ⚙️ How an alert actually gets out
+##  How an alert actually gets out
 
 SoundAlert is built around a shared local WiFi network. Every device on that network is reachable through the server, and an alert reaches all of them in real time, with the sender's location attached.
 
@@ -29,7 +29,7 @@ SoundAlert is built around a shared local WiFi network. Every device on that net
 
 ---
 
-## 🌍 What this version actually assumes, and an honest "ideal world" check
+## What this version actually assumes, and an honest "ideal world" check
 
 This version is built around one core assumption, stated plainly rather than left for someone to discover under pressure: **everyone is on the same local WiFi network.** There is no SMS, no cellular fallback, and no internet-wide delivery in this version. It is a local-network-and-location tool, not a wide-area one.
 
@@ -54,24 +54,23 @@ Scoping it this way, one network, with location, done well, is a deliberate and 
 
 ---
 
-## ✨ Features
+##  Features
 
 | Feature | Description |
 |---------|-------------|
-| 🔴 One-tap emergency | GBV/Femicide and Crime/Lawlessness alert types, triggered instantly |
-| 📡 WebRTC P2P | Direct peer-to-peer alert + chat over `RTCDataChannel`, with a self-built WebSocket signaling layer |
-| 🔊 Sonic alerts | Ultrasonic tone encoding/decoding for silent, network-free signaling between nearby devices |
-| 📲 Push notifications | Web Push via VAPID, delivered to every other device on the network even when the app is closed |
-| 📍 Live GPS + reverse geocoding | Coordinates resolved to a human-readable address (Nominatim, with a BigDataCloud fallback) |
-| 👥 Trusted contacts | CRUD-backed contact list (MongoDB) for reference during an incident |
-| 📶 Offline queueing | IndexedDB-backed store-and-forward, auto-flushed on reconnect or Background Sync if the network briefly drops |
-| 🔋 Battery metadata | Every alert carries the sender's battery level |
-| 🗒️ Alert history | Local log of sent and received alerts, with map links |
+|  One-tap emergency | GBV/Femicide and Crime/Lawlessness alert types, triggered instantly |
+|  WebRTC P2P | Direct peer-to-peer alert + chat over `RTCDataChannel`, with a self-built WebSocket signaling layer |
+|  Sonic alerts | Ultrasonic tone encoding/decoding for silent, network-free signaling between nearby devices |
+|  Push notifications | Web Push via VAPID, delivered to every other device on the network even when the app is closed |
+|  Live GPS + reverse geocoding | Coordinates resolved to a human-readable address (Nominatim, with a BigDataCloud fallback) |
+|  Trusted contacts | CRUD-backed contact list (MongoDB) for reference during an incident |
+|  Offline queueing | IndexedDB-backed store-and-forward, auto-flushed on reconnect or Background Sync if the network briefly drops |
+|  Alert history | Local log of sent and received alerts, with map links |
 | 💬 P2P chat | Real-time messaging over the same WebRTC data channel |
 
 ---
 
-## 🧰 Tech Stack
+## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
@@ -88,7 +87,7 @@ Scoping it this way, one network, with location, done well, is a deliberate and 
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - [Node.js](https://nodejs.org/) 18+
@@ -106,7 +105,7 @@ npm start
 
 Open **http://localhost:3000** on each device connected to the same network.
 
-> ⚠️ P2P and push both require a secure context: **HTTPS or `localhost` only**.
+> P2P and push both require a secure context: **HTTPS or `localhost` only**.
 
 ### Environment variables
 
@@ -133,7 +132,7 @@ Mongo is optional. The server runs without it, with contacts/history disabled an
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 Safety1st/
@@ -182,7 +181,7 @@ Safety1st/
 
 ---
 
-## 🧪 Testing locally
+## Testing locally
 
 **P2P + chat:** open two tabs/browsers at `localhost:3000`, wait for "Connected," send a chat message. It goes peer-to-peer; the server only handled signaling.
 
@@ -194,7 +193,7 @@ Safety1st/
 
 ---
 
-## 🚢 Deployment
+## Deployment
 
 Deployed on **Render.com**. `render.yaml` handles build/start config. Add the same environment variables from `.env` to the Render dashboard; they don't carry over from local automatically.
 
